@@ -83,10 +83,16 @@ powershell -File scripts\gen-bindings.ps1
 ```bash
 # 等价的手动命令
 pnpm tauri build
-# 产物：
+# 产物（tauri.conf.json 里 targets = ["nsis"]）：
 #   src-tauri/target/release/bundle/nsis/*.exe   (NSIS 安装程序)
-#   src-tauri/target/release/bundle/msi/*.msi    (MSI，如启用)
 #   src-tauri/target/release/desktop.exe         (绿色单文件，可直接运行)
+```
+
+**不出 MSI**：MSI 走 WiX 工具链、体积更大、且是 per-machine（要管理员），本项目不面向域环境批量分发，
+所以默认只出 NSIS + 绿色 exe。偶尔需要 MSI 时临时覆盖即可，不必改配置：
+
+```bash
+pnpm tauri build --bundles msi
 ```
 
 ## 日志

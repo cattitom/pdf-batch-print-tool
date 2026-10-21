@@ -38,7 +38,7 @@ if not errorlevel 1 (
 
 rem ---------- 3. 打包 ----------
 echo [1/2] 前端构建 + Rust 编译 + 安装包（LTO 全量编译，约 3-8 分钟）...
-echo       额外参数会透传给 tauri，例如: build-release.bat --bundles nsis
+echo       默认只出 NSIS 安装包；额外参数透传，例如: build-release.bat --bundles msi
 echo.
 call pnpm tauri build %*
 if errorlevel 1 goto :fail
