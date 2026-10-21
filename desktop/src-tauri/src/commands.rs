@@ -376,8 +376,9 @@ pub fn generate_labels(state: State<AppState>, spec: LabelSpecDto, out_path: Str
 /// 生成第一页预览图（base64 PNG）。
 #[tauri::command]
 pub fn preview_label(spec: LabelSpecDto) -> Result<String, ApiError> {
+    // 只排第一箱：UI 每次改表单都会自动来一次，不能按「生成全部」的成本算
     let spec = spec.into_core()?;
-    let pdf = core::generate_box_labels(&spec).map_err(ApiError::from)?;
+    let pdf = core::generate_label_preview(&spec).map_err(ApiError::from)?;
     let png = core::render_preview(&pdf, 96.0).map_err(ApiError::from)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
 }

@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, errorText } from "../api";
+import { api, errorText, SHOW_LABEL_TAB_KEY } from "../api";
 
-export default function SettingsPage() {
+export default function SettingsPage({
+  showLabelTab,
+  onShowLabelTab,
+}: {
+  showLabelTab: boolean;
+  onShowLabelTab: (v: boolean) => void;
+}) {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [newKey, setNewKey] = useState("");
@@ -52,6 +58,25 @@ export default function SettingsPage() {
       </div>
 
       <div className="settings-list">
+        <div className="setting-row">
+          <div className="setting-key">显示「箱唛生成」页签</div>
+          <label className="setting-toggle">
+            <input
+              type="checkbox"
+              checked={showLabelTab}
+              onChange={async (e) => {
+                const v = e.target.checked;
+                onShowLabelTab(v);
+                try {
+                  await api.setSetting(SHOW_LABEL_TAB_KEY, v ? "1" : "0");
+                } catch (err) {
+                  alert(`保存失败：${errorText(err)}`);
+                }
+              }}
+            />
+            <span>箱唛不常用，默认隐藏；勾选后页签栏才出现</span>
+          </label>
+        </div>
         {Object.keys(settings).length === 0 && (
           <div className="empty">
             <div className="empty-icon">⚙️</div>
@@ -59,7 +84,9 @@ export default function SettingsPage() {
             <div className="empty-sub">在下方添加，如 defaultTarget / sepPages / sepText</div>
           </div>
         )}
-        {Object.entries(drafts).map(([k, v]) => (
+        {Object.entries(drafts)
+          .filter(([k]) => k !== SHOW_LABEL_TAB_KEY)
+          .map(([k, v]) => (
           <div className="setting-row" key={k}>
             <div className="setting-key mono">{k}</div>
             <input
@@ -70,7 +97,7 @@ export default function SettingsPage() {
               保存
             </button>
           </div>
-        ))}
+          ))}
         <div className="setting-row new">
           <input
             className="mono"

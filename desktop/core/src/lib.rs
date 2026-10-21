@@ -35,5 +35,6 @@ pub use impose::{
     impose, impose_to, pdf_info, FileInput, ImposeOptions, ImposeStats, MM_TO_PT, PdfInfo,
 };
 pub use labels::{
-    build_plan, generate_box_labels, render_preview, LabelDocSpec, LabelSku, ParsedQuantity,
+    build_plan, generate_box_labels, generate_label_preview, render_preview, LabelDocSpec, LabelSku,
+    ParsedQuantity,
 };

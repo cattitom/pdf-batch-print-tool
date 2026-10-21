@@ -186,9 +186,25 @@ fn load_cjk_font() -> Result<FontFamily<FontData>, ImposeError> {
 pub fn generate_box_labels_raw(spec: &LabelDocSpec) -> Result<Vec<u8>, ImposeError> {
     let plan = build_plan(spec);
     if plan.is_empty() {
-        return Err("请至少填写一个 SKU".into());
+        return Err(ImposeError::invalid("请至少填写一个 SKU"));
     }
+    render_plan(spec, &plan)
+}
 
+/// 只渲染第一箱，供 UI 实时预览。
+///
+/// 与 [`generate_box_labels_raw`] 的区别：不做整份扁平化、只排一页，
+/// 因此每次表单改动都能在几十~一百毫秒内出图，不需要用户点按钮。
+pub fn generate_label_preview(spec: &LabelDocSpec) -> Result<Vec<u8>, ImposeError> {
+    let plan = build_plan(spec);
+    let first = plan
+        .first()
+        .ok_or_else(|| ImposeError::invalid("请至少填写一个 SKU"))?;
+    render_plan(spec, std::slice::from_ref(first))
+}
+
+/// 按给定计划排版成 PDF（原始版，未扁平化）。
+fn render_plan(spec: &LabelDocSpec, plan: &[ParsedQuantity]) -> Result<Vec<u8>, ImposeError> {
     let family = load_cjk_font()?;
     let mut doc = genpdf::Document::new(family);
     let (mm_w, mm_h) = LABEL_MM;
@@ -298,6 +314,26 @@ mod tests {
                 },
             ],
         }
+    }
+
+    /// 预览只排第一箱：页数为 1、比全量小，且没有 SKU 时给 invalid 而不是 panic。
+    #[test]
+    fn preview_renders_only_first_box() {
+        let s = spec(); // 3 箱 + 3 箱
+        let t = std::time::Instant::now();
+        let preview = generate_label_preview(&s).unwrap();
+        let elapsed = t.elapsed();
+        eprintln!("预览单页耗时: {elapsed:?}，{} 字节", preview.len());
+
+        let pdfium = crate::crop::pdfium();
+        let doc = pdfium.load_pdf_from_byte_slice(&preview, None).unwrap();
+        assert_eq!(doc.pages().len(), 1, "预览应只有 1 页");
+
+        let full = generate_box_labels_raw(&s).unwrap();
+        assert!(preview.len() < full.len(), "预览应比全量小");
+
+        let empty = LabelDocSpec { skus: vec![], ..s };
+        assert_eq!(generate_label_preview(&empty).unwrap_err().code(), "invalid");
     }
 
     #[test]

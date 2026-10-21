@@ -43,6 +43,11 @@ export async function listenImposeProgress(
   return un;
 }
 
+// ---------- 偏好键 ----------
+
+/** 是否在页签栏显示「箱唛生成」（"1" = 显示，缺省 = 隐藏）。 */
+export const SHOW_LABEL_TAB_KEY = "show_label_tab";
+
 // ---------- 错误 ----------
 
 /** 后端错误结构（commands.rs 的 ApiError）：code 用于分支，message 可直接展示。 */

@@ -421,6 +421,19 @@ input[type="checkbox"] {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+.preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  max-width: 420px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 16px;
+}
 
 /* ---- 历史 ---- */
 .hist-table {
@@ -468,6 +481,19 @@ input[type="checkbox"] {
 .setting-key {
   width: 200px;
   color: var(--muted);
+}
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.setting-toggle input {
+  flex: none;
+  width: auto;
+  cursor: pointer;
 }
 .saved-hint {
   color: #065f46;

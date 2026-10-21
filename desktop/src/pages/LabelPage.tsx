@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorHint, errorText, type LabelSku } from "../api";
 
@@ -66,18 +66,52 @@ export default function LabelPage() {
     skus: skus.filter((s) => s.sku.trim() !== ""),
   });
 
-  const doPreview = async () => {
-    setError(null);
-    try {
-      setBusy(true);
-      const b64 = await api.previewLabel(toSpec());
-      setPreview(`data:image/png;base64,${b64}`);
-    } catch (e) {
-      setError(errorText(e) + errorHint(e));
-    } finally {
-      setBusy(false);
+  // 实时预览：停手 450ms 自动刷新，不需要按钮；同一份参数直接走缓存。
+  // 单次渲染约 0.5s（genpdf 要把整份中文字体嵌进 PDF），所以不按键触发、只按「停手」触发。
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewCache = useRef(new Map<string, string>());
+  useEffect(() => {
+    const ready = inboundNo.trim() !== "" && skus.some((s) => s.sku.trim() !== "");
+    if (!ready) {
+      setPreview(null);
+      setPreviewError(null);
+      setPreviewLoading(false);
+      return;
     }
-  };
+    const spec = toSpec();
+    const key = JSON.stringify(spec);
+    const cached = previewCache.current.get(key);
+    if (cached) {
+      setPreview(cached);
+      setPreviewError(null);
+      setPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const b64 = await api.previewLabel(spec);
+        const url = `data:image/png;base64,${b64}`;
+        if (previewCache.current.size > 20) previewCache.current.clear();
+        previewCache.current.set(key, url);
+        if (!cancelled) {
+          setPreview(url);
+          setPreviewError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setPreviewError(errorText(e) + errorHint(e));
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inboundNo, warehouse, client, shelf, skus]);
 
   const doGenerate = async () => {
     setError(null);
@@ -104,9 +138,7 @@ export default function LabelPage() {
         <button className="btn primary big" onClick={doGenerate} disabled={busy}>
           {busy ? "生成中…" : "🏷 生成箱唛"}
         </button>
-        <button className="btn" onClick={doPreview} disabled={busy}>
-          预览首页
-        </button>
+
       </div>
 
       <div className="form-grid">
@@ -175,12 +207,19 @@ export default function LabelPage() {
         </button>
       </div>
 
-      {preview && (
-        <div className="preview-wrap">
-          <div className="preview-title">首页预览</div>
-          <img src={preview} alt="箱唛预览" className="preview-img" />
+      <div className="preview-wrap">
+        <div className="preview-title">
+          首页预览{previewLoading ? " · 生成中…" : ""}
         </div>
-      )}
+        {preview ? (
+          <img src={preview} alt="箱唛预览" className="preview-img" />
+        ) : (
+          <div className="preview-empty">
+            填好「入库单号」和至少一个 SKU 后，这里会自动显示第一张箱唛
+          </div>
+        )}
+        {previewError && <div className="banner err">❌ {previewError}</div>}
+      </div>
       {result && (
         <div className="banner ok">
           ✅ 已生成 {result.boxes} 张箱唛<div className="banner-path">{result.path}</div>
