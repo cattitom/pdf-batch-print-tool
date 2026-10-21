@@ -82,7 +82,7 @@ const OUT = path.join(require("os").tmpdir(), "e2e_impose_out.pdf");
           { name: "CROP-A4-3页.pdf", path: a, targetPages: 4, rotate: 90, crop: { type: "auto", marginMm: 2 } },
           { name: "PROBE-A4.pdf", path: b, targetPages: 2, rotate: 0, crop: null },
         ],
-        opts: { paperWmm: 210, paperHmm: 297, sepPages: 1, sepText: "这是分隔线" },
+        opts: { sepPages: 1, sepText: "这是分隔线" },
         outPath: out,
       });
     },

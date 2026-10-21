@@ -1,4 +1,4 @@
-//! 拼版合并：多 PDF 按目标页数凑页/截取复制，支持旋转、纸张缩放、
+//! 拼版合并：多 PDF 按目标页数凑页/截取复制，支持旋转、
 //! 裁剪与文件间分隔页。
 //!
 //! 与 Streamlit 版 `build_merged_pdf` 的行为对齐：
@@ -80,8 +80,7 @@ impl FileInput {
 
 #[derive(Debug, Clone, Default)]
 pub struct ImposeOptions {
-    /// 输出纸张 (宽, 高) 单位 pt；None = 保持原尺寸不缩放
-    pub paper: Option<(f64, f64)>,
+
     /// 每个文件（第一个除外）前插入的分隔页数量
     pub sep_pages: u32,
     /// 分隔页文字，默认「这是分隔线」
@@ -192,7 +191,7 @@ pub fn impose_to<W: Write>(
             // 循环复制：凑页时按整个文档轮转（与 Streamlit 版一致），截取时天然只取前 N 页
             let pid = page_ids[k % page_ids.len()];
             let (nid, w, h) =
-                add_content_page(&mut dst, &src, pid, &mut map, input, opts, crop_rect_first)?;
+                add_content_page(&mut dst, &src, pid, &mut map, input, crop_rect_first)?;
             kids.push(Object::Reference(nid));
             numbered.push(numbers::NumberedPage {
                 id: nid,
@@ -386,7 +385,6 @@ fn add_content_page(
     page_id: ObjectId,
     map: &mut HashMap<ObjectId, ObjectId>,
     input: &FileInput,
-    opts: &ImposeOptions,
     crop_rect_first: Option<(f64, f64, f64, f64)>,
 ) -> ImposeResult<(ObjectId, f64, f64)> {
     let dict_obj = src.get_object(page_id)?.clone();
@@ -408,32 +406,14 @@ fn add_content_page(
     let rot = input.rotate.rem_euclid(360);
     // 旋转后的显示尺寸（旋转烘焙进内容变换，不再用 /Rotate）
     let (dw, dh) = if rot == 90 || rot == 270 { (ch, cw) } else { (cw, ch) };
-    // 纸张方向自动跟随页面方向（与 Streamlit 版 transform_page 一致）
-    let paper = opts
-        .paper
-        .map(|(pw, ph)| if (dw > dh) != (pw > ph) { (ph, pw) } else { (pw, ph) });
-
-    // 完整变换矩阵 cm = [a b c d e f]：内容点 → 页面点
-    // 组成：裁剪平移(-x0,-y0) → 旋转(烘焙) → 等比缩放 → 纸张居中
+    // 变换矩阵 cm = [a b c d e f]：内容点 → 页面点
+    // 组成：裁剪平移(-x0,-y0) → 旋转（烘焙进内容）
     let (x0, y0) = crop.map(|(a, b, _, _)| (a, b)).unwrap_or((0.0, 0.0));
-    let (a, b, c, d, e, f) = match paper {
-        Some((pw, ph)) => {
-            let s = if dw > 0.0 && dh > 0.0 { (pw / dw).min(ph / dh) } else { 1.0 };
-            let ox = (pw - dw * s) / 2.0;
-            let oy = (ph - dh * s) / 2.0;
-            match rot {
-                90 => (0.0, -s, s, 0.0, ox - s * y0, s * cw + s * x0 + oy),
-                180 => (-s, 0.0, 0.0, -s, s * cw + s * x0 + ox, s * ch + s * y0 + oy),
-                270 => (0.0, s, -s, 0.0, s * ch + s * y0 + ox, oy - s * x0),
-                _ => (s, 0.0, 0.0, s, ox - s * x0, oy - s * y0),
-            }
-        }
-        None => match rot {
-            90 => (0.0, -1.0, 1.0, 0.0, -y0, cw + x0),
-            180 => (-1.0, 0.0, 0.0, -1.0, cw + x0, ch + y0),
-            270 => (0.0, 1.0, -1.0, 0.0, ch + y0, -x0),
-            _ => (1.0, 0.0, 0.0, 1.0, -x0, -y0),
-        },
+    let (a, b, c, d, e, f) = match rot {
+        90 => (0.0, -1.0, 1.0, 0.0, -y0, cw + x0),
+        180 => (-1.0, 0.0, 0.0, -1.0, cw + x0, ch + y0),
+        270 => (0.0, 1.0, -1.0, 0.0, ch + y0, -x0),
+        _ => (1.0, 0.0, 0.0, 1.0, -x0, -y0),
     };
     let identity = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 && e == 0.0 && f == 0.0;
 
@@ -456,7 +436,7 @@ fn add_content_page(
 
     // 在 dst 的页面上做后处理
     if let Object::Dictionary(pd2) = dst.get_object_mut(new_page_id)? {
-        // 页面框：有纸张设为纸张；有裁剪设为裁剪后尺寸（原点归零）；纯旋转设为显示尺寸
+        // 页面框：有裁剪设为裁剪后尺寸（原点归零）；纯旋转设为显示尺寸；否则沿用原页
         let set_box = |pd2: &mut lopdf::Dictionary, w: f64, h: f64| {
             let arr = || {
                 Object::Array(vec![
@@ -469,11 +449,9 @@ fn add_content_page(
             pd2.set("MediaBox", arr());
             pd2.set("CropBox", arr());
         };
-        if let Some((pw, ph)) = paper {
-            set_box(pd2, pw, ph);
-        } else if crop.is_some() {
-            set_box(pd2, cw, ch);
-        } else if rot != 0 {
+        // 页面框：有裁剪或旋转时都设为显示尺寸（dw/dh 已含裁剪与 90/270 的宽高互换）；
+        // 否则沿用原页框。之前 crop+rotate 会漏掉宽高互换，导致旋转后被裁切。
+        if crop.is_some() || rot != 0 {
             set_box(pd2, dw, dh);
         }
         // 变换：前后插微型流
@@ -490,11 +468,7 @@ fn add_content_page(
         }
     }
 
-    let final_size = if let Some((pw, ph)) = paper {
-        (pw, ph)
-    } else if crop.is_some() {
-        (cw, ch)
-    } else if rot != 0 {
+    let final_size = if crop.is_some() || rot != 0 {
         (dw, dh)
     } else {
         original
@@ -568,7 +542,6 @@ mod tests {
         let out = impose(
             &inputs,
             &ImposeOptions {
-                paper: None,
                 sep_pages: 1,
                 sep_text: None,
                 page_numbers: false,
@@ -582,7 +555,6 @@ mod tests {
         let with_nums = impose(
             &inputs,
             &ImposeOptions {
-                paper: None,
                 sep_pages: 1,
                 sep_text: None,
                 page_numbers: true,
@@ -610,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn impose_scale_rotate_manual_crop() {
+    fn impose_rotate_and_manual_crop() {
         let inputs = vec![FileInput {
             name: "A".into(),
             source: Source::Bytes(fixture("ORDER-A-2页.pdf")),
@@ -626,7 +598,6 @@ mod tests {
         let out = impose(
             &inputs,
             &ImposeOptions {
-                paper: Some((595.28, 841.89)),
                 sep_pages: 0,
                 sep_text: None,
                 page_numbers: false,
@@ -635,7 +606,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(count_pages(&out), 5);
-        // 旋转烘焙进内容变换：无 /Rotate；纸张方向跟随（竖页转 90° 后配横向 A4）
+        // 旋转烘焙进内容变换：无 /Rotate；裁剪 10mm 后竖页转 90° → 横向显示尺寸
         let doc = Document::load_mem(&out).unwrap();
         let first = doc.get_pages().values().next().unwrap().clone();
         let dict = doc.get_object(first).unwrap().clone();
@@ -651,9 +622,9 @@ mod tests {
                         _ => 0.0,
                     })
                     .collect();
-                // 竖页旋转 90° → 横向 A4 (841.89 × 595.28)
-                assert!((nums[2] - 841.89).abs() < 0.5, "宽应约 841.89: {:?}", nums);
-                assert!((nums[3] - 595.28).abs() < 0.5, "高应约 595.28: {:?}", nums);
+                // A4(595.28×841.89) 四边各裁 10mm → 538.59×785.20，转 90° 后横置
+                assert!((nums[2] - 785.20).abs() < 0.5, "宽应约 785.20: {:?}", nums);
+                assert!((nums[3] - 538.59).abs() < 0.5, "高应约 538.59: {:?}", nums);
             } else {
                 panic!("MediaBox 不是数组");
             }
@@ -793,33 +764,5 @@ mod tests {
         );
     }
 
-    /// 纸张缩放：A4 纸 + 横页 → 纸面自动转横向，页面框等于纸张（UI 的「输出纸张」）。
-    #[test]
-    fn paper_scaling_follows_orientation() {
-        let inputs = vec![FileInput {
-            target_pages: 1,
-            ..FileInput::from_bytes("B", fixture("MIX-B-70x30.pdf"))
-        }];
-        let out = impose(
-            &inputs,
-            &ImposeOptions { paper: Some((595.28, 841.89)), ..Default::default() },
-            &|_, _| {},
-        )
-        .unwrap();
-        let doc = Document::load_mem(&out).unwrap();
-        let page = doc.get_pages().values().next().unwrap().clone();
-        let dict = doc.get_object(page).unwrap();
-        let Object::Dictionary(d) = dict else { panic!("页面不是字典") };
-        let Object::Array(mb) = d.get(b"MediaBox").unwrap() else { panic!("MediaBox 不是数组") };
-        let nums: Vec<f64> = mb
-            .iter()
-            .map(|o| match o {
-                Object::Real(x) => *x as f64,
-                Object::Integer(i) => *i as f64,
-                _ => 0.0,
-            })
-            .collect();
-        assert!((nums[2] - 841.89).abs() < 0.5, "宽应为横向 A4: {nums:?}");
-        assert!((nums[3] - 595.28).abs() < 0.5, "高应为横向 A4: {nums:?}");
-    }
+
 }

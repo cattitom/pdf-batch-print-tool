@@ -116,11 +116,6 @@ pub struct ImposeFileDto {
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct ImposeOptsDto {
-    /// 输出纸张 mm；None = 保持原尺寸
-    #[serde(rename = "paperWmm")]
-    pub paper_w_mm: Option<f64>,
-    #[serde(rename = "paperHmm")]
-    pub paper_h_mm: Option<f64>,
     pub sep_pages: u32,
     pub sep_text: Option<String>,
     /// 每个文件的内容页盖页码「文件号-页/该文件页数」
@@ -187,22 +182,16 @@ pub fn impose_pdfs(
         })
         .collect();
 
-    let paper = match (opts.paper_w_mm, opts.paper_h_mm) {
-        (Some(w), Some(h)) => Some((w * core::MM_TO_PT, h * core::MM_TO_PT)),
-        _ => None,
-    };
     let core_opts = core::ImposeOptions {
-        paper,
         sep_pages: opts.sep_pages,
         sep_text: opts.sep_text,
         page_numbers: opts.page_numbers,
     };
 
     log::info!(
-        "拼版开始：{} 个文件，分隔页 {}，纸张 {:?}，页码 {}",
+        "拼版开始：{} 个文件，分隔页 {}，页码 {}",
         inputs.len(),
         core_opts.sep_pages,
-        core_opts.paper,
         core_opts.page_numbers
     );
     let t0 = std::time::Instant::now();
@@ -447,12 +436,10 @@ mod tests {
         assert_eq!(f.rotate, 90);
 
         let o: ImposeOptsDto = serde_json::from_value(serde_json::json!({
-            "paperWmm": 297.0, "paperHmm": 210.0, "sepPages": 1, "sepText": "这是分隔线",
-            "pageNumbers": false
+            "sepPages": 1, "sepText": "这是分隔线", "pageNumbers": false
         }))
         .unwrap();
         assert_eq!(o.sep_pages, 1);
-        assert_eq!(o.paper_w_mm, Some(297.0));
     }
 
     /// 箱唛 SKU 之前漏了 camelCase：前端传 pcsPerBox，Rust 按 pcs_per_box 收不到，

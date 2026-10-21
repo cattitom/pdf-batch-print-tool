@@ -14,14 +14,6 @@ import {
 
 const ROTATIONS = [0, 90, 180, 270];
 
-/// 输出纸张：none = 保持原尺寸；其余按 (宽mm, 高mm) 缩放并自动跟随页面方向。
-const PAPERS = {
-  none: null,
-  a4: { w: 210, h: 297 },
-  a3: { w: 297, h: 420 },
-} as const;
-type PaperKey = keyof typeof PAPERS;
-
 // ---------- 类型 ----------
 
 interface FileRow {
@@ -153,7 +145,6 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
   const [sepPages, setSepPages] = useState(1);
   const [sepText, setSepText] = useState("这是分隔线");
   const [pageNum, setPageNum] = useState(false);
-  const [paper, setPaper] = useState<PaperKey>("none");
   const [outputName, setOutputName] = useState("批量打印.pdf");
   const [outputDirty, setOutputDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -251,8 +242,6 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         },
       ];
       const opts: ImposeOpts = {
-        paperWmm: PAPERS[paper]?.w ?? null,
-        paperHmm: PAPERS[paper]?.h ?? null,
         sepPages: 0,
         sepText: null,
         pageNumbers: pageNum,
@@ -289,8 +278,6 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         crop: toCropSpec(r),
       }));
       const opts: ImposeOpts = {
-        paperWmm: PAPERS[paper]?.w ?? null,
-        paperHmm: PAPERS[paper]?.h ?? null,
         sepPages,
         sepText: sepPages > 0 ? sepText : null,
         pageNumbers: pageNum,
@@ -306,7 +293,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           outputPages: res.pages,
           paper: null,
           sepPages,
-          params: { sepText, paper, rotateByFile: files.map((f) => f.rotate) },
+          params: { sepText, rotateByFile: files.map((f) => f.rotate) },
           files: files.map(({ name, targetPages, rotate, crop }) => ({ name, targetPages, rotate, crop })),
         })
         .catch(() => {});
@@ -468,16 +455,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
             <input value={sepText} onChange={(e) => setSepText(e.target.value)} />
           </div>
         )}
-        <div className="field">
-          <label title="把每页等比缩放并居中到目标纸张；方向按每页自动跟随。">
-            输出纸张
-          </label>
-          <select value={paper} onChange={(e) => setPaper(e.target.value as PaperKey)}>
-            <option value="none">保持原尺寸</option>
-            <option value="a4">A4</option>
-            <option value="a3">A3</option>
-          </select>
-        </div>
+
         <div className="field">
           <label title="在每个文件的内容页右下角盖页码 1,2,3…（每个文件都从 1 重新开始，分隔页不编号）">
             页码
