@@ -1,6 +1,10 @@
 # 统一按文本处理，检出时用 LF；二进制文件显式排除，避免被当文本改写
 * text=auto eol=lf
 
+# Windows 批处理必须 CRLF，否则 cmd 解析括号块会出问题
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
 *.pdf binary
 *.png binary
 *.jpg binary
