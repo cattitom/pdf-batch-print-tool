@@ -1,0 +1,18 @@
+[package]
+name = "pdfimpose-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lopdf = "0.45"
+pdfium-render = "0.9"
+pdfium-bundled = "0.2"
+genpdf = { version = "0.2.0", features = ["images"] }
+barcoders = { version = "2", features = ["image"] }
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
+image = "0.25"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+ts-rs = "12"
+log = "0.4"

@@ -1,0 +1,12 @@
+# 统一按文本处理，检出时用 LF；二进制文件显式排除，避免被当文本改写
+* text=auto eol=lf
+
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.dll binary
+*.exe binary
+*.msi binary

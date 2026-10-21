@@ -1,0 +1,29 @@
+# ---- 构建产物 ----
+target/
+target-test/
+node_modules/
+dist/
+dist-ssr/
+/gen/schemas/
+
+# ---- 运行时数据（日志、SQLite）----
+logs/
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# ---- 编辑器 / 系统 ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*~
+
+# ---- 本地临时 ----
+*.local
+.env
+.env.*

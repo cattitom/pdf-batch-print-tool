@@ -1,0 +1,192 @@
+import { useEffect, useState } from "react";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { api, errorHint, errorText, type LabelSku } from "../api";
+
+interface SkuRow {
+  sku: string;
+  boxes: number;
+  pcsPerBox: number;
+  quantities: string;
+  newFlag: boolean;
+}
+
+const emptyRow = (): SkuRow => ({ sku: "", boxes: 1, pcsPerBox: 1, quantities: "", newFlag: true });
+
+export default function LabelPage() {
+  const [inboundNo, setInboundNo] = useState("");
+  const [warehouse, setWarehouse] = useState("");
+  const [client, setClient] = useState("");
+  const [shelf, setShelf] = useState("1");
+  const [skus, setSkus] = useState<SkuRow[]>([emptyRow()]);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [result, setResult] = useState<{ path: string; boxes: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadedLatest, setLoadedLatest] = useState(false);
+
+  // 打开页面时带出上一次单据
+  useEffect(() => {
+    if (loadedLatest) return;
+    setLoadedLatest(true);
+    api.latestLabelDoc().then((doc) => {
+      if (!doc) return;
+      setInboundNo(doc.inboundNo);
+      setWarehouse(doc.warehouse);
+      setClient(doc.client);
+      setShelf(doc.shelf);
+      try {
+        // 历史库里的旧记录是 snake_case（pcs_per_box / new_flag），一并兼容
+        type StoredSku = Partial<LabelSku> & { pcs_per_box?: number; new_flag?: boolean };
+        const rows = doc.skus as StoredSku[];
+        if (Array.isArray(rows) && rows.length > 0) {
+          setSkus(
+            rows.map((r) => ({
+              sku: r.sku ?? "",
+              boxes: r.boxes ?? 1,
+              pcsPerBox: r.pcsPerBox ?? r.pcs_per_box ?? 1,
+              quantities: r.quantities ?? "",
+              newFlag: r.newFlag ?? r.new_flag ?? true,
+            }))
+          );
+        }
+      } catch {
+        /* 忽略旧格式 */
+      }
+    });
+  }, [loadedLatest]);
+
+  const patchRow = (i: number, p: Partial<SkuRow>) =>
+    setSkus((prev) => prev.map((r, j) => (j === i ? { ...r, ...p } : r)));
+
+  const toSpec = () => ({
+    inboundNo,
+    warehouse,
+    client,
+    shelf,
+    skus: skus.filter((s) => s.sku.trim() !== ""),
+  });
+
+  const doPreview = async () => {
+    setError(null);
+    try {
+      setBusy(true);
+      const b64 = await api.previewLabel(toSpec());
+      setPreview(`data:image/png;base64,${b64}`);
+    } catch (e) {
+      setError(errorText(e) + errorHint(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doGenerate = async () => {
+    setError(null);
+    setResult(null);
+    try {
+      const outPath = await saveFileDialog({
+        defaultPath: `箱唛_${inboundNo || "单据"}.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!outPath) return;
+      setBusy(true);
+      const res = await api.generateLabels(toSpec(), outPath);
+      setResult(res);
+    } catch (e) {
+      setError(errorText(e) + errorHint(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="page">
+      <div className="toolbar">
+        <button className="btn primary big" onClick={doGenerate} disabled={busy}>
+          {busy ? "生成中…" : "🏷 生成箱唛"}
+        </button>
+        <button className="btn" onClick={doPreview} disabled={busy}>
+          预览首页
+        </button>
+      </div>
+
+      <div className="form-grid">
+        <div className="field">
+          <label>入库单号 *</label>
+          <input value={inboundNo} onChange={(e) => setInboundNo(e.target.value)} placeholder="如 IN20261020001" />
+        </div>
+        <div className="field">
+          <label>客户</label>
+          <input value={client} onChange={(e) => setClient(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>仓库</label>
+          <input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>货架号</label>
+          <input value={shelf} onChange={(e) => setShelf(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="sku-table">
+        <div className="sku-head">
+          <span>SKU</span>
+          <span>箱数</span>
+          <span>每箱件数</span>
+          <span>件数明细（如 250*6,167*2,166）</span>
+          <span>New</span>
+          <span></span>
+        </div>
+        {skus.map((row, i) => (
+          <div className="sku-row" key={i}>
+            <input value={row.sku} onChange={(e) => patchRow(i, { sku: e.target.value })} placeholder="SKU 编码" />
+            <input
+              type="number"
+              min={1}
+              value={row.boxes}
+              onChange={(e) => patchRow(i, { boxes: Math.max(1, +e.target.value || 1) })}
+            />
+            <input
+              type="number"
+              min={1}
+              value={row.pcsPerBox}
+              onChange={(e) => patchRow(i, { pcsPerBox: Math.max(1, +e.target.value || 1) })}
+            />
+            <input
+              value={row.quantities}
+              onChange={(e) => patchRow(i, { quantities: e.target.value })}
+              placeholder="可选，填了按明细展开"
+            />
+            <input
+              type="checkbox"
+              checked={row.newFlag}
+              onChange={(e) => patchRow(i, { newFlag: e.target.checked })}
+            />
+            <button
+              className="btn danger"
+              onClick={() => setSkus((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev))}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button className="btn" onClick={() => setSkus((prev) => [...prev, emptyRow()])}>
+          ＋ 添加 SKU
+        </button>
+      </div>
+
+      {preview && (
+        <div className="preview-wrap">
+          <div className="preview-title">首页预览</div>
+          <img src={preview} alt="箱唛预览" className="preview-img" />
+        </div>
+      )}
+      {result && (
+        <div className="banner ok">
+          ✅ 已生成 {result.boxes} 张箱唛<div className="banner-path">{result.path}</div>
+        </div>
+      )}
+      {error && <div className="banner err">❌ {error}</div>}
+    </div>
+  );
+}
