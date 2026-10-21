@@ -36,11 +36,16 @@ desktop/
 
 前置：Node 22+、pnpm、Rust（MSVC）、WebView2。
 
+双击 `dev-start.bat`（等价于下面的命令）。脚本会检查 pnpm/Rust、提示 1420 端口是否已被占用、
+把日志级别设为 `debug`，并在启动前告诉你是否还有 desktop.exe 占着 `target\debug`。
+
 ```bash
 cd desktop
 pnpm install
 pnpm tauri dev        # 开发窗口（vite :1420 热更新）
 ```
+
+开发模式的日志同样写在 `%APPDATA%\com.hanlin.pdfprint\logs\app.log`。
 
 ## 测试
 
