@@ -1402,12 +1402,15 @@ name = "pdfimpose-core"
 version = "0.1.0"
 dependencies = [
  "barcoders",
+ "encoding_rs",
+ "flate2",
  "genpdf",
  "image 0.25.10",
  "log",
  "lopdf 0.45.0",
  "pdfium-bundled",
  "pdfium-render",
+ "printpdf",
  "qrcode",
  "rusqlite",
  "serde",

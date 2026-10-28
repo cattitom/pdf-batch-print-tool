@@ -18,6 +18,8 @@ pub mod font;
 pub mod impose;
 pub mod labels;
 pub mod numbers;
+pub mod parse_packing;
+pub mod product_label;
 pub mod sep;
 
 #[cfg(test)]
@@ -37,4 +39,10 @@ pub use impose::{
 pub use labels::{
     build_plan, generate_box_labels, generate_label_preview, render_preview, LabelDocSpec, LabelSku,
     ParsedQuantity,
+};
+pub use parse_packing::{
+    parse_file, parse_grid, parse_text, PackingError, PackingItem, PackingSheet,
+};
+pub use product_label::{
+    generate_product_label_preview, generate_product_labels, total_labels, ProductLabelItem,
 };
