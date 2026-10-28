@@ -3,7 +3,11 @@
 /**
  * 一条录货待办。字段名与 core::PackingItem 一致，前端直接渲染。
  */
-export type PackingItemDto = { seq: number, name: string, qty: number, qtyRaw: string, inbound: string, destination: string, waybill: string, checked: boolean, 
+export type PackingItemDto = { seq: number, name: string, qty: number, qtyRaw: string, inbound: string, destination: string, 
+/**
+ * 客户 / 供应商（表里通常只在段首写一次，解析时向下沿用）
+ */
+customer: string, waybill: string, checked: boolean, 
 /**
  * name / qty / inbound / inbound_sci / mark_text / dup_mark
  */

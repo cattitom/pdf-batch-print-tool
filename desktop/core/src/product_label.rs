@@ -64,10 +64,13 @@ pub fn total_labels(items: &[ProductLabelItem]) -> usize {
         .sum()
 }
 
-/// 批量生成产品标签 PDF（每张一页，50×30mm），已扁平化，体积几十 KB。
+/// 批量生成产品标签 PDF（每张一页，50×30mm）。
+///
+/// 扁平化用 600dpi + 纯黑白：标签机只有 1 bit，300dpi 灰度的边缘会被驱动
+/// 抖成麻点（打印出来比 glabels 的矢量版糊）。600dpi 二值后边缘锐利，条码不受影响。
 pub fn generate_product_labels(items: &[ProductLabelItem]) -> Result<Vec<u8>, ImposeError> {
     let raw = render(items, false)?;
-    crate::flatten::flatten_pdf(&raw, 300.0)
+    crate::flatten::flatten_pdf_ex(&raw, 600.0, true)
 }
 
 /// 只排第一行、只出一页，供 UI 实时预览（不做扁平化，保持矢量清晰）。

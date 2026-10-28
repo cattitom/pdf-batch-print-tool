@@ -622,6 +622,51 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result
     db(&state).set_setting(&key, &value).map_err(ApiError::from)
 }
 
+// ---------- 录货清单：已录勾选 ----------
+
+/// 一条勾选记录，按「单号 + 入库号 + 商品名」认行。
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PackingCheckDto {
+    pub waybill: String,
+    pub inbound: String,
+    pub name: String,
+    pub checked: bool,
+}
+
+#[tauri::command]
+pub fn set_packing_check(
+    state: State<AppState>,
+    waybill: String,
+    inbound: String,
+    name: String,
+    checked: bool,
+) -> Result<(), ApiError> {
+    db(&state)
+        .set_packing_check(&waybill, &inbound, &name, checked)
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub fn list_packing_checks(state: State<AppState>) -> Result<Vec<PackingCheckDto>, ApiError> {
+    let rows = db(&state).all_packing_checks().map_err(ApiError::from)?;
+    Ok(rows
+        .into_iter()
+        .map(|(waybill, inbound, name, checked)| PackingCheckDto {
+            waybill,
+            inbound,
+            name,
+            checked,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn clear_packing_checks(state: State<AppState>) -> Result<(), ApiError> {
+    db(&state).clear_packing_checks().map_err(ApiError::from)
+}
+
 // ---------- 装箱单解析 ----------
 
 /// 一条录货待办。字段名与 core::PackingItem 一致，前端直接渲染。
@@ -636,6 +681,8 @@ pub struct PackingItemDto {
     pub qty_raw: String,
     pub inbound: String,
     pub destination: String,
+    /// 客户 / 供应商（表里通常只在段首写一次，解析时向下沿用）
+    pub customer: String,
     pub waybill: String,
     pub checked: bool,
     /// name / qty / inbound / inbound_sci / mark_text / dup_mark
@@ -673,6 +720,7 @@ impl From<core::PackingSheet> for PackingSheetDto {
                     qty_raw: i.qty_raw,
                     inbound: i.inbound,
                     destination: i.destination,
+                    customer: i.customer,
                     waybill: i.waybill,
                     checked: i.checked,
                     issues: i.issues,

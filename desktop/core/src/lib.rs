@@ -32,7 +32,7 @@ pub use rusqlite;
 
 pub use crop::{detect_content_bbox, render_page_bgra, render_pages, CropSpec};
 pub use db::{Db, LabelDocEntry, LabelDocInput, PrintHistoryEntry, PrintHistoryInput};
-pub use flatten::flatten_pdf;
+pub use flatten::{flatten_pdf, flatten_pdf_ex};
 pub use impose::{
     impose, impose_to, pdf_info, FileInput, ImposeOptions, ImposeStats, MM_TO_PT, PdfInfo,
 };

@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { Menu } from "antd";
 import { api, SHOW_BOXPLAN_TAB_KEY, SHOW_LABEL_TAB_KEY, SHOW_PRODUCT_TAB_KEY } from "./api";
 import ImposePage from "./pages/ImposePage";
 import LabelPage from "./pages/LabelPage";
 import ProductLabelPage from "./pages/ProductLabelPage";
-import HistoryPage from "./pages/HistoryPage";
 import SettingsPage from "./pages/SettingsPage";
 import BoxPlanPage from "./pages/BoxPlanPage";
 import PackingPage from "./pages/PackingPage";
 import "./App.css";
 
-type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "history" | "settings";
+type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "settings";
 
 interface TabDef {
   key: TabKey;
@@ -20,7 +20,6 @@ interface TabDef {
 const BASE_TABS: TabDef[] = [
   { key: "impose", label: "🖨 PDF 拼版" },
   { key: "packing", label: "📋 录货清单" },
-  { key: "history", label: "🕘 历史" },
   { key: "settings", label: "⚙️ 设置" },
 ];
 
@@ -88,33 +87,45 @@ export default function App() {
 
   const tabs = [
     BASE_TABS[0],
+    BASE_TABS[1],
     ...(showLabelTab ? [LABEL_TAB] : []),
     ...(showBoxplanTab ? [BOXPLAN_TAB] : []),
     ...(showProductTab ? [PRODUCT_TAB] : []),
-    ...BASE_TABS.slice(1),
+    BASE_TABS[2],
   ];
 
   return (
     <div className="app">
-      <nav className="tabbar">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            className={`tab ${tab === t.key ? "active" : ""}`}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <Menu
+        mode="horizontal"
+        selectedKeys={[tab]}
+        onClick={({ key }) => setTab(key as TabKey)}
+        items={tabs.map((t) => ({ key: t.key, label: t.label }))}
+        style={{
+          paddingInline: 16,
+          background: "#fffefb",
+          borderBottom: "1px solid #e5e1d9",
+          lineHeight: "46px",
+        }}
+      />
       <main className="content">
-        {tab === "impose" && <ImposePage pendingDrop={pendingDrop} />}
-        {tab === "packing" && <PackingPage pendingDrop={packingDrop} />}
-        {tab === "boxplan" && <BoxPlanPage />}
-        {tab === "label" && <LabelPage />}
-        {tab === "product" && <ProductLabelPage />}
-        {tab === "history" && <HistoryPage />}
-        {tab === "settings" && (
+        {/* 各页保持挂载、只切显隐：切走再回来时表格、勾选、筛选都还在 */}
+        <div style={{ display: tab === "impose" ? "block" : "none" }}>
+          <ImposePage pendingDrop={pendingDrop} />
+        </div>
+        <div style={{ display: tab === "packing" ? "block" : "none" }}>
+          <PackingPage pendingDrop={packingDrop} />
+        </div>
+        <div style={{ display: tab === "boxplan" ? "block" : "none" }}>
+          <BoxPlanPage />
+        </div>
+        <div style={{ display: tab === "label" ? "block" : "none" }}>
+          <LabelPage />
+        </div>
+        <div style={{ display: tab === "product" ? "block" : "none" }}>
+          <ProductLabelPage />
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none" }}>
           <SettingsPage
             showLabelTab={showLabelTab}
             onShowLabelTab={setShowLabelTab}
@@ -123,7 +134,7 @@ export default function App() {
             showProductTab={showProductTab}
             onShowProductTab={setShowProductTab}
           />
-        )}
+        </div>
       </main>
     </div>
   );

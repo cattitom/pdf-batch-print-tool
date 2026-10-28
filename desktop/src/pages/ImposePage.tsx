@@ -1,3 +1,4 @@
+import HistoryButton from "../components/HistoryButton";
 import { Fragment, useCallback, useEffect, useState, type ReactElement } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { tempDir, join } from "@tauri-apps/api/path";
@@ -348,6 +349,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           />
         </div>
         <div className="spacer" />
+        <HistoryButton />
         <button className="btn big" onClick={() => runImpose(false)} disabled={busy || rows.length === 0}>
           {busy && busyAction === "compose" ? "合成中…" : "🖨 仅合成"}
         </button>

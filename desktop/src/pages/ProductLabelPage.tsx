@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import HistoryButton from "../components/HistoryButton";
 import { api, errorHint, errorText } from "../api";
 
-/** 产品标签：粘贴「编码,名称」快速解析，或直接在表格里改；生成后自动用 WPS 打开。 */
+/**
+ * 产品标签：只负责「数据录入 + 分份」。
+ * 版式和打印交给 gLabels——它输出矢量，比本工具扁平化出来的 PDF 清晰。
+ */
 
 interface Row {
   code: string;
@@ -12,37 +16,54 @@ interface Row {
 
 const emptyRow = (): Row => ({ code: "", name: "", copies: 1 });
 
-/** 每行一条：第一个逗号（半角/全角/制表符）前是编码，后面是名称。 */
+/** 上次导出 CSV 的完整路径（存在本机设置里，下次直接覆盖同名文件）。 */
+const KEY_CSV_PATH = "product_label_csv_path";
+
+const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/**
+ * 拆一行：编码是英文/数字，名称是中文，所以不用逗号也能分。
+ * 切法优先级：Tab 或逗号（Excel 两列粘贴）→ 第一个空白（空白在汉字之前才算）
+ * → 第一个汉字（编码和名称直接连写时）→ 整行当编码。
+ */
+function splitLine(line: string): { code: string; name: string } {
+  const sep = line.search(/[,，\t]/);
+  if (sep >= 0) {
+    return { code: line.slice(0, sep).trim(), name: line.slice(sep + 1).trim() };
+  }
+  const space = line.search(/\s/);
+  const cjk = line.search(CJK);
+  // 行首就是汉字说明没有编码，整行当名称、丢掉（避免中文编码混进表格）
+  if (cjk === 0) return { code: "", name: line.trim() };
+  if (cjk > 0 && (space < 0 || space >= cjk)) {
+    return { code: line.slice(0, cjk).trim(), name: line.slice(cjk).trim() };
+  }
+  if (space > 0) {
+    return { code: line.slice(0, space).trim(), name: line.slice(space + 1).trim() };
+  }
+  return { code: line.trim(), name: "" };
+}
+
+/** 每行一条产品。 */
 function parseBulk(text: string): Row[] {
   return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "")
-    .map((line) => {
-      const i = line.search(/[,，\t]/);
-      if (i < 0) return { code: line.trim(), name: "", copies: 1 };
-      return {
-        code: line.slice(0, i).trim(),
-        name: line.slice(i + 1).trim(),
-        copies: 1,
-      };
-    })
+    .map((line) => ({ ...splitLine(line), copies: 1 }))
     .filter((r) => r.code !== "");
+}
+
+/** CSV 单元格：含逗号/引号/换行时用双引号包起来（标准 CSV，gLabels 认）。 */
+function csvCell(s: string): string {
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export default function ProductLabelPage() {
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [bulk, setBulk] = useState("");
-  const [preview, setPreview] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ path: string; pages: number } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [csvPath, setCsvPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openedWith, setOpenedWith] = useState<string | null>(null);
-  const [openError, setOpenError] = useState<string | null>(null);
-
-  const previewCache = useRef(new Map<string, string>());
 
   const items = rows
     .filter((r) => r.code.trim() !== "")
@@ -67,111 +88,91 @@ export default function ProductLabelPage() {
     });
   };
 
-  // 实时预览：停手 500ms 刷新；同一份数据走缓存（每次 embed 字体约 0.5s）
-  useEffect(() => {
-    if (items.length === 0) {
-      setPreview(null);
-      setPreviewError(null);
-      setPreviewLoading(false);
-      return;
-    }
-    const key = JSON.stringify(items);
-    const cached = previewCache.current.get(key);
-    if (cached) {
-      setPreview(cached);
-      setPreviewError(null);
-      setPreviewLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setPreviewLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const b64 = await api.previewProductLabel(items);
-        const url = `data:image/png;base64,${b64}`;
-        if (previewCache.current.size > 20) previewCache.current.clear();
-        previewCache.current.set(key, url);
-        if (!cancelled) {
-          setPreview(url);
-          setPreviewError(null);
-        }
-      } catch (e) {
-        if (!cancelled) setPreviewError(errorText(e) + errorHint(e));
-      } finally {
-        if (!cancelled) setPreviewLoading(false);
-      }
-    }, 500);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
-
-  // ---- 用 WPS 打开成品（生成后自动打开与「重试打开」共用） ----
-  const openWithWps = async (path: string) => {
-    setOpenError(null);
-    try {
-      const opened = await api.openPdfInWps(path);
-      setOpenedWith(opened.app);
-    } catch (e) {
-      setOpenedWith(null);
-      setOpenError(errorText(e) + errorHint(e));
-    }
-  };
-
-  const doGenerate = async () => {
+  /** 导出 CSV 给 gLabels：一条记录一行，份数按行展开（Merge 一条记录出一张）。 */
+  const doExportCsv = async () => {
     setError(null);
-    setResult(null);
-    setOpenedWith(null);
-    setOpenError(null);
+    setCsvPath(null);
     if (items.length === 0) {
       setError("请至少填写一行编码");
       return;
     }
     try {
+      // 默认路径：上次导出的那份（通常是 gLabels 正指着的 labels.csv），没有就用同名字
+      let lastPath = "labels.csv";
+      try {
+        const saved = await api.allSettings();
+        if (saved[KEY_CSV_PATH]) lastPath = saved[KEY_CSV_PATH];
+      } catch {
+        // 读设置失败就用默认名，不挡导出
+      }
       const outPath = await saveFileDialog({
-        defaultPath: `产品标签_${new Date().toISOString().slice(0, 10)}.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
+        defaultPath: lastPath,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
       });
       if (!outPath) return;
-      setBusy(true);
-      const res = await api.generateProductLabels(items, outPath);
-      setResult(res);
-      // 和拼版页一致：生成完直接用 WPS PDF 打开
-      await openWithWps(res.path);
+
+      const lines: string[] = [];
+      for (const it of items) {
+        for (let i = 0; i < it.copies; i++) {
+          lines.push(`${csvCell(it.code)},${csvCell(it.name)}`);
+        }
+      }
+      // save_text_file 用 UTF-8 写盘、不带 BOM，gLabels 直接能读
+      await api.saveTextFile(outPath, lines.join("\r\n") + "\r\n");
+      setCsvPath(outPath);
+      // 记一笔历史，方便之后从「历史」里找回这份 CSV
+      api
+        .addPrintHistory({
+          outputName: outPath.split(/[\\/]/).pop() ?? outPath,
+          outputPath: outPath,
+          outputPages: 0,
+          paper: null,
+          sepPages: 0,
+          params: { kind: "product-label-csv", rows: lines.length },
+          files: [],
+        })
+        .catch(() => {});
+      api.setSetting(KEY_CSV_PATH, outPath).catch(() => {
+        // 记不住路径不影响本次导出
+      });
     } catch (e) {
-      setError(errorText(e) + errorHint(e));
-    } finally {
-      setBusy(false);
+      setError(
+        errorText(e) +
+          errorHint(e) +
+          "（如果 gLabels 正开着这个 CSV，先关掉再导出）",
+      );
     }
   };
 
   return (
     <div className="page">
       <div className="toolbar">
-        <button className="btn primary big" onClick={doGenerate} disabled={busy || items.length === 0}>
-          {busy ? "生成中…" : "🏷 生成产品标签"}
+        <button className="btn primary big" onClick={doExportCsv} disabled={items.length === 0}>
+          📄 导出 CSV（给 gLabels）
         </button>
         <span className="muted">
-          50 × 30 mm，一页一张，共 {total} 张 · 生成后自动用 WPS 打开
+          共 {total} 张 · CSV 是 UTF-8 无 BOM，gLabels 的 Merge 直接读；版式和打印在 gLabels 里调
         </span>
+        <span className="spacer" />
+        <HistoryButton />
       </div>
 
       <div className="form-grid">
         <div className="boxplan-title">快速解析</div>
         <div className="field grow">
-          <label>每行一条，第一个逗号前是编码、后面是名称（Excel 两列可直接粘进来）</label>
+          <label>每行一条：英文编码 + 中文名称（中间空格可以有，也可以直接连着写）</label>
           <textarea
             className="boxplan-textarea mono"
             value={bulk}
             onChange={(e) => onBulkChange(e.target.value)}
-            placeholder={"CX-RMG-04，染眉膏-04\nCX-RMG-02，染眉膏-02\nCX-RMG-01，染眉膏-01"}
+            placeholder={"ZX-WYB-LF 晚宴包绿粉色\nZX-WYB-DALF 晚宴包深绿粉\nZX-WYB-HZ 晚宴包黑棕色"}
             spellCheck={false}
           />
         </div>
         <div className="toolbar">
-          <span className="muted">支持半角逗号、全角逗号、制表符；空行自动忽略</span>
+          <span className="muted">
+            编码读到第一个汉字或空白为止；Excel 两列直接粘（Tab / 逗号）也认；空行自动忽略
+          </span>
         </div>
       </div>
 
@@ -236,39 +237,14 @@ export default function ProductLabelPage() {
           <button className="btn" onClick={() => setRows((prev) => [...prev, emptyRow()])}>
             ＋ 添加一行
           </button>
-          <span className="muted">编码必填；份数 = 这个标签打印几张（同一条会连续出页）</span>
+          <span className="muted">编码必填；份数 = 这个标签打几张（CSV 里按份数展开成多行）</span>
         </div>
       </div>
 
-      <div className="preview-wrap">
-        <div className="preview-title">
-          首页预览{previewLoading ? " · 生成中…" : ""}
-        </div>
-        {preview ? (
-          <img src={preview} alt="产品标签预览" className="preview-img" />
-        ) : (
-          <div className="preview-empty">
-            填好第一行编码后，这里会自动显示 50 × 30 mm 的标签效果
-          </div>
-        )}
-        {previewError && <div className="banner err">❌ {previewError}</div>}
-      </div>
-
-      {result && (
+      {csvPath && (
         <div className="banner ok">
-          ✅ 已生成 {result.pages} 张产品标签
-          {openedWith && <> · 已在 {openedWith} 中打开</>}
-          <div className="banner-path">{result.path}</div>
-        </div>
-      )}
-      {openError && (
-        <div className="banner warn">
-          ⚠️ 文件已生成，但自动用 WPS 打开失败：{openError}
-          {result && (
-            <button className="btn sm banner-btn" onClick={() => openWithWps(result.path)}>
-              重试打开
-            </button>
-          )}
+          ✅ 已导出 CSV（UTF-8 无 BOM），共 {total} 行
+          <div className="banner-path">{csvPath}</div>
         </div>
       )}
       {error && <div className="banner err">❌ {error}</div>}

@@ -7,7 +7,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS print_history (
@@ -38,6 +38,19 @@ CREATE INDEX IF NOT EXISTS idx_label_docs_created ON label_docs(created_at DESC)
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+"#;
+
+/// v2：录货清单的「已录」勾选。按「单号 + 入库号 + 商品名」认行，
+/// 数量改了不影响，重新解析同一份表时还能认回来。
+const SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS packing_checks (
+    waybill    TEXT NOT NULL,
+    inbound    TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    checked    INTEGER NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    PRIMARY KEY (waybill, inbound, name)
 );
 "#;
 
@@ -140,6 +153,51 @@ impl Db {
             self.conn.execute_batch(SCHEMA_V1)?;
             self.conn.pragma_update(None, "user_version", 1)?;
         }
+        if version < 2 {
+            self.conn.execute_batch(SCHEMA_V2)?;
+            self.conn.pragma_update(None, "user_version", 2)?;
+        }
+        Ok(())
+    }
+
+    // ---------- 录货清单的「已录」勾选 ----------
+
+    pub fn set_packing_check(
+        &self,
+        waybill: &str,
+        inbound: &str,
+        name: &str,
+        checked: bool,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO packing_checks(waybill, inbound, name, checked, updated_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now', 'localtime'))
+             ON CONFLICT(waybill, inbound, name) DO UPDATE SET
+               checked = excluded.checked,
+               updated_at = excluded.updated_at",
+            params![waybill, inbound, name, checked as i64],
+        )?;
+        Ok(())
+    }
+
+    /// 全部勾选记录（waybill, inbound, name, checked）。行数不多，一次读完。
+    pub fn all_packing_checks(&self) -> rusqlite::Result<Vec<(String, String, String, bool)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT waybill, inbound, name, checked FROM packing_checks")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)? != 0,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn clear_packing_checks(&self) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM packing_checks", [])?;
         Ok(())
     }
 

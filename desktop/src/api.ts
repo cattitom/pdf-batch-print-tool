@@ -12,6 +12,7 @@ import type { ImposeFileDto } from "./bindings/ImposeFileDto";
 import type { ImposeOptsDto } from "./bindings/ImposeOptsDto";
 import type { ImposeResultDto } from "./bindings/ImposeResultDto";
 import type { PdfInfo } from "./bindings/PdfInfo";
+import type { PackingCheckDto } from "./bindings/PackingCheckDto";
 import type { PrintHistoryEntry } from "./bindings/PrintHistoryEntry";
 import type { LabelSku } from "./bindings/LabelSku";
 import type { LabelSpecDto } from "./bindings/LabelSpecDto";
@@ -147,12 +148,8 @@ export const api = {
   listLabelDocs: (limit = 50) => invoke<LabelDocEntry[]>("list_label_docs", { limit }),
   latestLabelDoc: () => invoke<LabelDocEntry | null>("latest_label_doc"),
 
-  // 产品标签（50×30mm）
-  previewProductLabel: (items: ProductLabelItem[]) =>
-    invoke<string>("preview_product_label", { items }),
-  generateProductLabels: (items: ProductLabelItem[], outPath: string) =>
-    invoke<ProductLabelResult>("generate_product_labels", { items, outPath }),
-
+  // 产品标签（50×30mm）不再由本工具出 PDF，只导出 CSV 交给 gLabels；
+  // 后端 generate_product_labels / preview_product_label 命令保留，需要时可直接调。
   // 日志
   logDir: () => invoke<string>("log_dir"),
   readLogTail: (lines = 400) => invoke<string>("read_log_tail", { lines }),
@@ -171,4 +168,10 @@ export const api = {
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+
+  // 录货清单：已录勾选（按 单号 + 入库号 + 商品名 认行）
+  setPackingCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>
+    invoke<void>("set_packing_check", { waybill, inbound, name, checked }),
+  listPackingChecks: () => invoke<PackingCheckDto[]>("list_packing_checks"),
+  clearPackingChecks: () => invoke<void>("clear_packing_checks"),
 };

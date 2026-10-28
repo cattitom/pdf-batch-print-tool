@@ -24,6 +24,8 @@ pub struct PackingItem {
     pub inbound: String,
     pub destination: String,
     pub waybill: String,
+    /// 客户 / 供应商名称（表里通常只在段首写一次，下面沿用）
+    pub customer: String,
     pub checked: bool,
     /// 校验提示码：name / qty / inbound / inbound_sci / mark_text / dup_mark
     pub issues: Vec<String>,
@@ -208,6 +210,7 @@ enum Col {
     Qty,
     Inbound,
     Dest,
+    Customer,
     Mark,
     Waybill,
     Ignore,
@@ -218,6 +221,10 @@ fn classify(header: &str) -> Col {
     let h = header.to_lowercase();
     let has = |keys: &[&str]| keys.iter().any(|k| h.contains(k));
 
+    // 「客户名称」是下单方；「客户单号」还是单号
+    if has(&["客户"]) && !has(&["单号"]) {
+        return Col::Customer;
+    }
     // 顺序要紧：「入库单号」是入库号，不是运单号
     if has(&["入库"]) {
         return Col::Inbound;
@@ -225,7 +232,15 @@ fn classify(header: &str) -> Col {
     if has(&["单号", "运单", "waybill", "tracking"]) {
         return Col::Waybill;
     }
-    if has(&["目的地", "目的港", "到港", "destination"]) {
+    if has(&[
+        "目的地",
+        "目的港",
+        "到港",
+        "收货仓",
+        "收货地",
+        "仓库",
+        "destination",
+    ]) {
         return Col::Dest;
     }
     if has(&["数量", "件数", "箱数", "qty", "quantity", "pcs"]) {
@@ -253,6 +268,7 @@ struct RawRow {
     qty_raw: String,
     inbound: String,
     destination: String,
+    customer: String,
     waybill: Option<String>,
     /// None = 这一格是空的（可能是合并单元格的下半部分）；Some(true/false) = 格子里有内容
     mark: Option<bool>,
@@ -266,6 +282,7 @@ struct Strategy {
     qty: usize,
     inbound: usize,
     dest: Option<usize>,
+    customer: Option<usize>,
     mark: Option<usize>,
     waybill: Option<usize>,
     label: String,
@@ -273,33 +290,42 @@ struct Strategy {
 
 impl Strategy {
     fn from_header(header: &[String]) -> Option<Self> {
-        let (mut name, mut qty, mut inbound, mut dest, mut mark, mut waybill) =
-            (None, None, None, None, None, None);
+        let (mut name, mut qty, mut inbound, mut dest, mut customer, mut mark, mut waybill) =
+            (None, None, None, None, None, None, None);
         for (i, cell) in header.iter().enumerate() {
             match classify(cell) {
                 Col::Name if name.is_none() => name = Some(i),
                 Col::Qty if qty.is_none() => qty = Some(i),
                 Col::Inbound if inbound.is_none() => inbound = Some(i),
                 Col::Dest if dest.is_none() => dest = Some(i),
+                Col::Customer if customer.is_none() => customer = Some(i),
                 Col::Mark if mark.is_none() => mark = Some(i),
                 Col::Waybill if waybill.is_none() => waybill = Some(i),
                 _ => {}
             }
         }
         let (name, qty, inbound) = (name?, qty?, inbound?);
+        let mut label = format!(
+            "按表头识别：名称=第{}列 数量=第{}列",
+            name + 1,
+            qty + 1
+        );
+        if let Some(d) = dest {
+            label.push_str(&format!(" 目的地=第{}列", d + 1));
+        }
+        if let Some(c) = customer {
+            label.push_str(&format!(" 客户=第{}列", c + 1));
+        }
+        label.push_str(&format!(" 入库号=第{}列", inbound + 1));
         Some(Self {
             name,
             qty,
             inbound,
             dest,
+            customer,
             mark,
             waybill,
-            label: format!(
-                "按表头识别：名称=第{}列 数量=第{}列 入库号=第{}列",
-                name + 1,
-                qty + 1,
-                inbound + 1
-            ),
+            label,
         })
     }
 
@@ -314,6 +340,7 @@ impl Strategy {
             qty: 6,
             inbound: 10,
             dest: Some(9),
+            customer: None,
             mark: Some(7),
             waybill: None,
             label: "按截图模板列序：名称=1 数量=7 标记=8 目的地=10 入库号=11".to_string(),
@@ -332,6 +359,7 @@ impl Strategy {
             qty_raw: get(self.qty),
             inbound: get(self.inbound),
             destination: self.dest.map(get).unwrap_or_default(),
+            customer: self.customer.map(get).unwrap_or_default(),
             waybill,
             mark: None,
             mark_text: false,
@@ -381,6 +409,7 @@ fn guess_row(row: &[String]) -> RawRow {
         qty_raw: qty_idx.map(|i| row[i].clone()).unwrap_or_default(),
         inbound,
         destination: String::new(),
+        customer: String::new(),
         waybill: row.iter().find_map(|c| extract_waybill(c)),
         mark: None,
         mark_text: false,
@@ -413,6 +442,11 @@ fn detect_header(rows: &[Vec<String>]) -> Option<usize> {
 }
 
 fn is_header_like(row: &[String]) -> bool {
+    // 数据行里常常也带着「报关」「收货仓」「单号：xxx」这些词，光数关键词会把货行误杀。
+    // 真表头不会有纯数字格子（长宽高、数量、体积都空着），先按这条挡一道。
+    if row.iter().any(|c| c.trim().parse::<f64>().is_ok()) {
+        return false;
+    }
     row.iter().filter(|c| classify(c) != Col::Unknown).count() >= 3
 }
 
@@ -439,17 +473,42 @@ fn parse_table(rows: Vec<Vec<String>>) -> PackingSheet {
     let mut items: Vec<PackingItem> = Vec::new();
     let mut last_dest = String::new();
     let mut last_inbound = String::new();
+    let mut last_customer = String::new();
     let mut waybills: Vec<String> = Vec::new();
+    // 周报类表格按段写「单号：xxx」：段内向下沿用，遇到新的就切换
+    let mut current_waybill = String::new();
+    // 表尾的合计行（整行只有一个「总箱数」）：不是货物，记下来当整表合计数
+    let mut table_total: Option<i64> = None;
 
     for row in rows.iter().skip(start) {
         if is_header_like(row) {
             continue;
         }
+        if let Some(w) = row.iter().find_map(|c| extract_waybill(c)) {
+            current_waybill = w;
+        }
         let raw = match &strategy {
             Some(s) => s.row(row),
             None => guess_row(row),
         };
+        // 客户名可能写在一行「只有客户名、没有货」的分隔行上（如「翰林」），
+        // 这种行后面会被跳过，所以要在所有 continue 之前先记住它
+        if !raw.customer.trim().is_empty() {
+            last_customer = raw.customer.trim().to_string();
+        }
         if raw.name.is_empty() && raw.qty_raw.is_empty() && raw.inbound.is_empty() {
+            continue;
+        }
+        // 只有数量、没有名称/入库号/目的地 → 是表尾合计，别当成一条货
+        if !raw.qty_raw.trim().is_empty()
+            && raw.name.trim().is_empty()
+            && raw.inbound.trim().is_empty()
+            && raw.destination.trim().is_empty()
+        {
+            let v = parse_qty(&raw.qty_raw);
+            if v > 0 {
+                table_total = Some(v);
+            }
             continue;
         }
 
@@ -476,10 +535,21 @@ fn parse_table(rows: Vec<Vec<String>>) -> PackingSheet {
             qty_raw: raw.qty_raw.trim().to_string(),
             inbound: raw.inbound.trim().to_string(),
             destination: raw.destination.trim().to_string(),
-            waybill: raw.waybill.clone().unwrap_or_default(),
+            customer: raw.customer.trim().to_string(),
+            waybill: raw
+                .waybill
+                .clone()
+                .unwrap_or_else(|| current_waybill.clone()),
             checked: raw.mark.unwrap_or(false),
             ..Default::default()
         };
+
+        // 客户名称通常只在段首写一次，下面沿用
+        if item.customer.is_empty() {
+            item.customer = last_customer.clone();
+        } else {
+            last_customer = item.customer.clone();
+        }
 
         // 合并单元格的下半部分：目的地 / 入库号按上一行补齐（这两列留空一定不对）。
         // 补出来的值要标出来：OCR 把合并格里的字认在中间那行时，最上面那行会被
@@ -555,11 +625,7 @@ fn parse_table(rows: Vec<Vec<String>>) -> PackingSheet {
         }
     }
     sheet.waybill = uniq.first().cloned().unwrap_or_default();
-    if uniq.len() > 1 {
-        sheet
-            .warnings
-            .push(format!("表里出现 {} 个不同单号：{}", uniq.len(), uniq.join(" / ")));
-    }
+    // 多个单号是常态（周报按单号分票展示），不提示；这里只记第一个当默认值
     for item in items.iter_mut() {
         if item.waybill.is_empty() {
             item.waybill = sheet.waybill.clone();
@@ -569,13 +635,19 @@ fn parse_table(rows: Vec<Vec<String>>) -> PackingSheet {
         sheet.warnings.push("没识别到单号（表右侧的「单号: …」）".to_string());
     }
 
-    sheet.expected_qty = extract_expected(&rows);
+    // 表尾有合计行就用它；没有才退回文字里的「现N件」
+    sheet.expected_qty = table_total.or_else(|| extract_expected(&rows));
     items = dedupe(items, &mut sheet.warnings);
 
     for (i, item) in items.iter_mut().enumerate() {
         item.seq = (i + 1) as u32;
     }
     sheet.total_qty = items.iter().map(|i| i.qty).sum();
+    // 多单号的是周报/汇总表，文字里的「现N件」多半只是某一段的小结；
+    // 但表尾真有合计行时那是整表数，照常校验
+    if uniq.len() > 1 && table_total.is_none() {
+        sheet.expected_qty = None;
+    }
     if let Some(expected) = sheet.expected_qty {
         if expected != sheet.total_qty {
             sheet.warnings.push(format!(
@@ -636,35 +708,48 @@ fn extract_waybill(cell: &str) -> Option<String> {
     None
 }
 
-/// 「(现168件)」里的合计。
+/// 「(现168件)」里的合计。表里出现多个小结（`先174件` / `66件`）时不做校验：
+/// 那是分段小计，不是整表合计，硬比只会一直报错。
 fn extract_expected(rows: &[Vec<String>]) -> Option<i64> {
+    let mut found: Vec<i64> = Vec::new();
     for row in rows {
         for cell in row {
             if let Some(pos) = cell.find('现') {
                 let rest = &cell[pos + '现'.len_utf8()..];
                 let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
                 if let Ok(v) = digits.parse::<i64>() {
-                    if v > 0 {
-                        return Some(v);
+                    if v > 0 && !found.contains(&v) {
+                        found.push(v);
                     }
                 }
             }
         }
     }
-    None
+    if found.len() == 1 {
+        found.first().copied()
+    } else {
+        None
+    }
 }
 
-/// 同一「商品名称 + 入库号」只留一条，优先留已勾选的。
+/// 完全同款的行只留一条（OCR 会把同一行认两遍）。
+/// key 里必须带上数量/目的地：同一种货不同箱规是两批，不能被当成重复吃掉。
 fn dedupe(items: Vec<PackingItem>, warnings: &mut Vec<String>) -> Vec<PackingItem> {
     let mut out: Vec<PackingItem> = Vec::new();
-    let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut index: BTreeMap<(String, String, String, i64, String), usize> = BTreeMap::new();
 
     for item in items {
         if item.name.is_empty() || item.inbound.is_empty() {
             out.push(item);
             continue;
         }
-        let key = (item.name.clone(), item.inbound.clone());
+        let key = (
+            item.name.clone(),
+            item.inbound.clone(),
+            item.waybill.clone(),
+            item.qty,
+            item.destination.clone(),
+        );
         match index.get(&key).copied() {
             None => {
                 index.insert(key, out.len());

@@ -3,8 +3,10 @@
 //! 用途：pdfium / genpdf 嵌入 CJK 字体时都会把**整份字体文件**塞进 PDF
 //! （如 msyh 19.7MB、simhei 10MB），导致几页的文档膨胀到几十 MB。
 //! 网页版 reportlab 会做字形子集化所以很小；Rust 生态这两个库都不子集化，
-//! 因此生成后统一扁平化：文件只剩图像，体积回到几十 KB，300dpi 打印质量足够
-//! （热敏标签常见 203dpi，激光 600dpi），条码/二维码扫描无影响。
+//! 因此生成后统一扁平化：文件只剩图像，体积回到几十 KB。
+//! DPI 和是否二值化按用途选：
+//! - 箱唛（100×100mm，字大）：300dpi 灰度，体积小
+//! - 产品标签（50×30mm，字小）：600dpi + 二值化，否则打印发糊（见 [flatten_pdf_ex]）
 
 use crate::error::ImposeError;
 use crate::crop::pdfium;
@@ -15,6 +17,19 @@ use pdfium_render::prelude::*;
 ///
 /// `dpi` 建议 300：A4 单页约 3508×2480 灰度，压缩后通常 100–300KB。
 pub fn flatten_pdf(pdf_bytes: &[u8], dpi: f32) -> Result<Vec<u8>, ImposeError> {
+    flatten_pdf_ex(pdf_bytes, dpi, false)
+}
+
+/// `bilevel = true` 时把灰度按阈值二值化成纯黑白。
+///
+/// 热敏标签机只有 1 bit，灰度图会被驱动抖动成一片麻点，小字边缘看着发糊；
+/// 直接给纯黑白，打印机不用再抖动，笔画边缘反而锐利。分辨率也要跟着提
+/// （标签是 50×30mm，600dpi 才 1181×709 灰度，压缩后几十 KB）。
+pub fn flatten_pdf_ex(
+    pdf_bytes: &[u8],
+    dpi: f32,
+    bilevel: bool,
+) -> Result<Vec<u8>, ImposeError> {
     let src = pdfium().load_pdf_from_byte_slice(pdf_bytes, None)?;
     let total = src.pages().len();
 
@@ -28,7 +43,12 @@ pub fn flatten_pdf(pdf_bytes: &[u8], dpi: f32) -> Result<Vec<u8>, ImposeError> {
         let cfg = PdfRenderConfig::new()
             .set_target_width(((pw as f64 / 72.0 * dpi as f64).round() as i32).max(1))
             .set_target_height(((ph as f64 / 72.0 * dpi as f64).round() as i32).max(1));
-        let img = page.render_with_config(&cfg)?.as_image()?.to_luma8();
+        let mut img = page.render_with_config(&cfg)?.as_image()?.to_luma8();
+        if bilevel {
+            for px in img.iter_mut() {
+                *px = if *px < 128 { 0 } else { 255 };
+            }
+        }
         let (iw, ih) = img.dimensions();
 
         // 图像 XObject（灰度 8bit，Flate 压缩）
