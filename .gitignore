@@ -27,3 +27,20 @@ Desktop.ini
 *.local
 .env
 .env.*
+
+# ---- Python 缓存（out/generator 用）----
+__pycache__/
+*.pyc
+
+# ---- OCR 模型（37MB 二进制，按 desktop/models/README.md 单独下载）----
+desktop/models/*
+!desktop/models/README.md
+
+# ---- WorkBuddy 应用指针（含本机绝对路径，换机器就失效）----
+.wbapp_*.genie
+
+# ---- 与本项目无关的生成素材（大肥鱼视频等）----
+/out/
+
+# ---- 本机一次性输入数据（拖进来试功能的样例）----
+/晚宴包.csv
