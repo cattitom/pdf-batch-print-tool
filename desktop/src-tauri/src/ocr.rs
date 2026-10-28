@@ -1,6 +1,7 @@
 //! 装箱单截图识别：两条引擎，产出同一份「词 + 坐标」。
 //!
-//! - **PaddleOCR（MNN 推理）**：`models/` 下有 `PP-OCRv5_mobile_det.mnn` 等模型时优先用，
+//! - **PaddleOCR（MNN 推理）**：`models/` 下有 `PP-OCRv6_medium_det.mnn`（最高精度档）或
+//!   `PP-OCRv6_small_det.mnn` / `PP-OCRv5_mobile_det.mnn`（降级档）时优先用，
 //!   中文/数字准确率明显高于系统 OCR；
 //! - **Windows 自带 OCR**（`Windows.Media.Ocr`）：没有模型时的兜底，离线免费、零依赖。
 //!
@@ -747,13 +748,30 @@ fn models_dir() -> Option<PathBuf> {
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("models"));
     candidates
         .into_iter()
-        .find(|dir| model_files_in(dir).is_some())
+        .find(|dir| !available_sets(dir).is_empty())
 }
 
-/// 可用的模型组合，优先小字更准的 v6 small，其次 v5 mobile。
-/// 想换分辨率更高的模型时，把文件丢进 models/ 即可，代码不用改。
-fn model_files_in(dir: &std::path::Path) -> Option<(PathBuf, PathBuf, PathBuf, &'static str)> {
+/// `models/` 里实际存在、文件齐全的模型档，按精度从高到低：
+/// 1. v6 medium（官方 accuracy-first 档，最准）
+/// 2. v6 small（均衡档）
+/// 3. v5 mobile（老轻量档，兜底）
+/// 想换档位时，把三个文件丢进 `models/` 即可，代码不用改。
+fn available_sets(dir: &std::path::Path) -> Vec<(PathBuf, PathBuf, PathBuf, &'static str)> {
     const SETS: &[(&str, &str, &str, &str)] = &[
+        // 检测用 medium（框更稳），识别用 small（窄列里两个「1」并排时不容易漏），
+        // 实测三张真截图全对；纯 medium 会在第三张漏掉一个「1」。
+        (
+            "PP-OCRv6_medium_det.mnn",
+            "PP-OCRv6_small_rec.mnn",
+            "ppocr_keys_v6_small.txt",
+            "PP-OCRv6-medium-det+small-rec",
+        ),
+        (
+            "PP-OCRv6_medium_det.mnn",
+            "PP-OCRv6_medium_rec.mnn",
+            "ppocr_keys_v6_medium.txt",
+            "PP-OCRv6-medium",
+        ),
         (
             "PP-OCRv6_small_det.mnn",
             "PP-OCRv6_small_rec.mnn",
@@ -767,59 +785,88 @@ fn model_files_in(dir: &std::path::Path) -> Option<(PathBuf, PathBuf, PathBuf, &
             "PP-OCRv5-mobile",
         ),
     ];
-    for (det, rec, dict, name) in SETS {
-        let (d, r, k) = (dir.join(det), dir.join(rec), dir.join(dict));
-        if d.exists() && r.exists() && k.exists() {
-            return Some((d, r, k, name));
-        }
-    }
-    None
+    SETS.iter()
+        .filter_map(|(det, rec, dict, name)| {
+            let (d, r, k) = (dir.join(det), dir.join(rec), dir.join(dict));
+            (d.exists() && r.exists() && k.exists()).then_some((d, r, k, *name))
+        })
+        .collect()
 }
 
-/// 引擎初始化要读 20MB 模型，进程内只做一次。
-fn paddle_engine() -> Option<&'static ocr_rs::OcrEngine> {
-    static ENGINE: OnceLock<Option<ocr_rs::OcrEngine>> = OnceLock::new();
-    ENGINE
-        .get_or_init(|| {
-            let dir = models_dir()?;
-            let (det, rec, dict, name) = model_files_in(&dir)?;
-            let started = std::time::Instant::now();
-            // 默认配置会丢掉低置信度的单个数字（标记列的「1」），这里放宽；
-            // max_side_len 默认 960 会把 1600+ 宽的截图缩小一半，小字直接糊掉，必须调大。
-            let mut cfg = ocr_rs::OcrEngineConfig::default();
-            cfg.min_result_confidence = 0.2;
-            cfg.det_options.max_side_len = 4096;
-            cfg.det_options.box_threshold = 0.4;
-            cfg.det_options.score_threshold = 0.25;
-            cfg.det_options.min_area = 4;
-            cfg.det_options.merge_boxes = false;
-            match ocr_rs::OcrEngine::new(
-                det.to_str()?,
-                rec.to_str()?,
-                dict.to_str()?,
-                Some(cfg),
-            ) {
-                Ok(engine) => {
-                    log::info!(
-                        "PaddleOCR 模型 {name} 加载完成（{}ms）",
-                        started.elapsed().as_millis()
-                    );
-                    Some(engine)
-                }
-                Err(e) => {
-                    log::warn!("PaddleOCR 初始化失败，回退系统 OCR：{e}");
-                    None
-                }
-            }
+/// 可用档位名，精度从高到低。
+fn available_tiers() -> Vec<&'static str> {
+    models_dir()
+        .map(|dir| {
+            available_sets(&dir)
+                .into_iter()
+                .map(|(_, _, _, n)| n)
+                .collect()
         })
-        .as_ref()
+        .unwrap_or_default()
+}
+
+/// 引擎初始化要读几十 MB 模型，进程内每档只做一次。
+fn engine_for(tier: &'static str) -> Option<Arc<ocr_rs::OcrEngine>> {
+    static CACHE: OnceLock<Mutex<Vec<(&'static str, Option<Arc<ocr_rs::OcrEngine>>)>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, engine)) = guard.iter().find(|(name, _)| *name == tier) {
+        return engine.clone();
+    }
+    let engine = build_engine(tier);
+    guard.push((tier, engine.clone()));
+    engine
+}
+
+fn build_engine(tier: &'static str) -> Option<Arc<ocr_rs::OcrEngine>> {
+    let dir = models_dir()?;
+    let (det, rec, dict, name) = available_sets(&dir)
+        .into_iter()
+        .find(|(_, _, _, n)| *n == tier)?;
+    let started = std::time::Instant::now();
+    // 默认配置会丢掉低置信度的单个数字（标记列的「1」），这里放宽；
+    // max_side_len 默认 960 会把 1600+ 宽的截图缩小一半，小字直接糊掉，必须调大。
+    let mut cfg = ocr_rs::OcrEngineConfig::default();
+    cfg.min_result_confidence = 0.2;
+    // 最高精度档：MNN 高精度推理（不走低精度加速），线程按逻辑核拉满
+    cfg.precision_mode = ocr_rs::PrecisionMode::High;
+    cfg.thread_count = std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(4)
+        .clamp(4, 20);
+    cfg.det_options.max_side_len = 4096;
+    cfg.det_options.box_threshold = 0.4;
+    cfg.det_options.score_threshold = 0.25;
+    cfg.det_options.min_area = 4;
+    cfg.det_options.merge_boxes = false;
+    match ocr_rs::OcrEngine::new(
+        det.to_str()?,
+        rec.to_str()?,
+        dict.to_str()?,
+        Some(cfg),
+    ) {
+        Ok(engine) => {
+            log::info!(
+                "PaddleOCR 模型 {name} 加载完成（{}ms）",
+                started.elapsed().as_millis()
+            );
+            Some(Arc::new(engine))
+        }
+        Err(e) => {
+            log::warn!("PaddleOCR 模型 {name} 初始化失败：{e}");
+            None
+        }
+    }
 }
 
 /// PaddleOCR：小图先放大再识别。
 /// 这类截图一行才 26px 高、单个数字才 10px，检测阶段很容易整格漏掉，
 /// 放大 2 倍后单个「1」才稳。
-fn recognize_words_paddle(path: &str) -> Result<Vec<Word>, String> {
-    let engine = paddle_engine().ok_or_else(|| "PaddleOCR 模型未就绪".to_string())?;
+fn recognize_words_paddle_with(
+    path: &str,
+    engine: &ocr_rs::OcrEngine,
+) -> Result<Vec<Word>, String> {
     let mut img = image::open(path).map_err(|e| format!("打不开图片：{e}"))?;
     let mut scale = 1.0f32;
     if img.width() < 2400 {
@@ -849,25 +896,72 @@ fn recognize_words_paddle(path: &str) -> Result<Vec<Word>, String> {
 
 /// 当前会用哪个引擎：`"paddle"` / `"system"`。
 pub fn engine_name() -> &'static str {
-    if paddle_engine().is_some() {
-        "paddle"
-    } else {
+    if available_tiers().is_empty() {
         "system"
+    } else {
+        "paddle"
     }
+}
+
+/// 合计校验：表里写了「合计 N 件」就对得上，没写（None）就算过。
+fn totals_match(sheet: &core::PackingSheet) -> bool {
+    sheet
+        .expected_qty
+        .map_or(true, |expected| expected == sheet.total_qty)
 }
 
 // ---------- 对外入口 ----------
 
 /// 图片 → 待办清单。整条链路：OCR（Paddle 优先，系统兜底）→ 切行切列 → 认列 → core 解析。
+///
+/// 有多档模型时先用最高精度档（v6 medium）；合计对不上时换下一档重跑，
+/// 取能对上合计的那份。medium 在个别小字上会漏字符，单跑一档反而不如这样稳。
 pub fn parse_image(path: &str) -> Result<core::PackingSheet, String> {
-    let words = match recognize_words_paddle(path) {
-        Ok(w) if !w.is_empty() => w,
-        Ok(_) => recognize_words(path)?,
-        Err(e) => {
-            log::warn!("PaddleOCR 不可用，回退系统 OCR：{e}");
-            recognize_words(path)?
+    let tiers = available_tiers();
+    if tiers.is_empty() {
+        let words = recognize_words(path)?;
+        return build_sheet(path, words);
+    }
+
+    let mut fallback: Option<core::PackingSheet> = None;
+    for tier in &tiers {
+        let engine = match engine_for(tier) {
+            Some(e) => e,
+            None => continue,
+        };
+        let words = match recognize_words_paddle_with(path, &engine) {
+            Ok(w) if !w.is_empty() => w,
+            Ok(_) => continue,
+            Err(e) => {
+                log::warn!("档位 {tier} 识别失败：{e}");
+                continue;
+            }
+        };
+        let sheet = build_sheet(path, words)?;
+        log::info!(
+            "OCR 档位 {tier}：{} 行，合计 {}（表里写 {:?}）",
+            sheet.items.len(),
+            sheet.total_qty,
+            sheet.expected_qty
+        );
+        if totals_match(&sheet) {
+            return Ok(sheet);
         }
-    };
+        if fallback.is_none() {
+            fallback = Some(sheet);
+        }
+    }
+
+    if let Some(sheet) = fallback {
+        return Ok(sheet);
+    }
+    log::warn!("PaddleOCR 各档位都不可用，回退系统 OCR");
+    let words = recognize_words(path)?;
+    build_sheet(path, words)
+}
+
+/// 识别出的词 → 切行切列 → 认列 → core 解析。
+fn build_sheet(path: &str, words: Vec<Word>) -> Result<core::PackingSheet, String> {
     if words.is_empty() {
         return Err("图片里没识别出文字，换张清晰点的图试试".to_string());
     }
@@ -1056,8 +1150,10 @@ mod tests {
     fn debug_dump() {
         let p = fixture("装箱单样例.png");
         if !p.exists() { return; }
-        let words = recognize_words_paddle(p.to_str().unwrap()).unwrap();
-        println!("words={}", words.len());
+        let Some(tier) = available_tiers().first().copied() else { return };
+        let Some(engine) = engine_for(tier) else { return };
+        let words = recognize_words_paddle_with(p.to_str().unwrap(), &engine).unwrap();
+        println!("tier={tier} words={}", words.len());
         for w in &words { println!("({:.0},{:.0})-({:.0},{:.0}) {}", w.x0, w.y0, w.x1, w.y1, w.text); }
         let grid = words_to_grid(&words);
         for (i, r) in grid.iter().enumerate() { println!("{i:>2} | {}", r.join(" ‖ ")); }

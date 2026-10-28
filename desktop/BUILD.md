@@ -69,8 +69,10 @@ $env:LIBCLANG_PATH = "D:\Scoop\apps\llvm\current\bin"   # 当前终端生效；s
 
 ### OCR 模型（可选）
 
-`models/` 里放 PP-OCRv5 的 `det`/`rec` 和字典就启用 PaddleOCR，不放就自动回退 Windows 自带 OCR。
-下载命令见 [`models/README.md`](models/README.md)。
+`models/` 里放 PP-OCRv6 的模型和字典就启用 PaddleOCR，不放就自动回退 Windows 自带 OCR。
+当前配置：**medium 检测 + small 识别**（`PP-OCRv6_medium_det` + `PP-OCRv6_small_rec`），
+MNN 高精度推理、线程拉满；合计对不上会自动换下一档重跑。模型清单、打包体积和实测结论见
+[`models/README.md`](models/README.md)。
 
 ## 测试
 
@@ -114,9 +116,13 @@ powershell -File scripts\gen-bindings.ps1
 # 等价的手动命令
 pnpm tauri build
 # 产物（tauri.conf.json 里 targets = ["nsis"]）：
-#   src-tauri/target/release/bundle/nsis/*.exe   (NSIS 安装程序)
+#   src-tauri/target/release/bundle/nsis/*.exe   (NSIS 安装程序，约 46MB，含 OCR 模型)
 #   src-tauri/target/release/desktop.exe         (绿色单文件，可直接运行)
 ```
+
+OCR 模型（medium 检测 + small 识别，约 40MB）由 `bundle.resources` 打进安装包，装完就能用
+PaddleOCR，不用再手动拷模型。不想带模型就把 `tauri.conf.json` 里那三条 `resources` 删掉，
+安装包回到 6MB 左右，程序自动退回系统 OCR。
 
 **不出 MSI**：MSI 走 WiX 工具链、体积更大、且是 per-machine（要管理员），本项目不面向域环境批量分发，
 所以默认只出 NSIS + 绿色 exe。偶尔需要 MSI 时临时覆盖即可，不必改配置：
