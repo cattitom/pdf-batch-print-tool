@@ -148,8 +148,11 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
   const [outputName, setOutputName] = useState("批量打印.pdf");
   const [outputDirty, setOutputDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"compose" | "composeOpen" | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<{ path: string; pages: number; elapsedMs: number; sizeBytes: number } | null>(null);
+  const [openedWith, setOpenedWith] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewPages, setPreviewPages] = useState<string[] | null>(null);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -258,12 +261,27 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
     }
   };
 
-  // ---- 合成 ----
-  const runImpose = async () => {
+  // ---- 用 WPS 打开成品（自动打开与「重试打开」共用） ----
+  const openWithWps = async (path: string) => {
+    setOpenError(null);
+    try {
+      const opened = await api.openPdfInWps(path);
+      setOpenedWith(opened.app);
+    } catch (e) {
+      setOpenedWith(null);
+      setOpenError(errorText(e) + errorHint(e));
+    }
+  };
+
+  // ---- 合成：openInWps=true 时合成完自动用 WPS PDF 打开 ----
+  const runImpose = async (openInWps = false) => {
     if (rows.length === 0) return;
     setError(null);
     setResult(null);
+    setOpenedWith(null);
+    setOpenError(null);
     setBusy(true);
+    setBusyAction(openInWps ? "composeOpen" : "compose");
     try {
       // 不弹另存为对话框：直接输出到第一个源文件所在文件夹
       const first = rows[0].path;
@@ -297,10 +315,13 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           files: files.map(({ name, targetPages, rotate, crop }) => ({ name, targetPages, rotate, crop })),
         })
         .catch(() => {});
+      // 合成成功后自动在 WPS PDF 里打开
+      if (openInWps) await openWithWps(res.path);
     } catch (e) {
       setError(errorText(e) + errorHint(e));
     } finally {
       setBusy(false);
+      setBusyAction(null);
       setProgress(null);
     }
   };
@@ -327,8 +348,11 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           />
         </div>
         <div className="spacer" />
-        <button className="btn primary big" onClick={runImpose} disabled={busy || rows.length === 0}>
-          {busy ? "合成中…" : "🖨 开始合成"}
+        <button className="btn big" onClick={() => runImpose(false)} disabled={busy || rows.length === 0}>
+          {busy && busyAction === "compose" ? "合成中…" : "🖨 仅合成"}
+        </button>
+        <button className="btn primary big" onClick={() => runImpose(true)} disabled={busy || rows.length === 0}>
+          {busy && busyAction === "composeOpen" ? "合成中…" : "📄 合成并打开 WPS PDF"}
         </button>
       </div>
 
@@ -498,7 +522,18 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         <div className="banner ok">
           ✅ 合成完成：{result.pages} 页 · {(result.sizeBytes / 1024 / 1024).toFixed(1)} MB ·{" "}
           {(result.elapsedMs / 1000).toFixed(2)}s
+          {openedWith && <> · 已在 {openedWith} 中打开</>}
           <div className="banner-path">{result.path}</div>
+        </div>
+      )}
+      {openError && (
+        <div className="banner warn">
+          ⚠️ 文件已合成，但自动用 WPS 打开失败：{openError}
+          {result && (
+            <button className="btn sm banner-btn" onClick={() => openWithWps(result.path)}>
+              重试打开
+            </button>
+          )}
         </div>
       )}
       {error && <div className="banner err">❌ {error}</div>}

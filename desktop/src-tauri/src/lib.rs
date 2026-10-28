@@ -1,5 +1,7 @@
 mod commands;
 mod logging;
+#[cfg(windows)]
+mod ocr;
 
 use tauri::Manager;
 
@@ -26,6 +28,7 @@ pub fn run() {
             commands::pdf_infos,
             commands::preview_pdf,
             commands::impose_pdfs,
+            commands::open_pdf_in_wps,
             commands::add_print_history,
             commands::list_print_history,
             commands::delete_print_history,
@@ -34,9 +37,17 @@ pub fn run() {
             commands::preview_label,
             commands::list_label_docs,
             commands::latest_label_doc,
+            commands::generate_product_labels,
+            commands::preview_product_label,
             commands::all_settings,
             commands::set_setting,
             commands::log_dir,
+            commands::parse_packing_text,
+            commands::parse_packing_file,
+            commands::parse_packing_image,
+            commands::save_text_file,
+            commands::read_log_tail,
+            commands::clear_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

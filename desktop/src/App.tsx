@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { api, SHOW_LABEL_TAB_KEY } from "./api";
+import { api, SHOW_BOXPLAN_TAB_KEY, SHOW_LABEL_TAB_KEY, SHOW_PRODUCT_TAB_KEY } from "./api";
 import ImposePage from "./pages/ImposePage";
 import LabelPage from "./pages/LabelPage";
+import ProductLabelPage from "./pages/ProductLabelPage";
 import HistoryPage from "./pages/HistoryPage";
 import SettingsPage from "./pages/SettingsPage";
+import BoxPlanPage from "./pages/BoxPlanPage";
+import PackingPage from "./pages/PackingPage";
 import "./App.css";
 
-type TabKey = "impose" | "label" | "history" | "settings";
+type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "history" | "settings";
 
 interface TabDef {
   key: TabKey;
@@ -16,12 +19,15 @@ interface TabDef {
 
 const BASE_TABS: TabDef[] = [
   { key: "impose", label: "🖨 PDF 拼版" },
+  { key: "packing", label: "📋 录货清单" },
   { key: "history", label: "🕘 历史" },
   { key: "settings", label: "⚙️ 设置" },
 ];
 
-/** 箱唛不常用：默认不出现在页签栏，由「设置」里的开关控制。 */
+/** 箱唛、箱规、产品标签不常用：默认不出现在页签栏，在设置里开启后常驻。 */
 const LABEL_TAB: TabDef = { key: "label", label: "🏷 箱唛生成" };
+const BOXPLAN_TAB: TabDef = { key: "boxplan", label: "📦 箱规计划" };
+const PRODUCT_TAB: TabDef = { key: "product", label: "🏷 产品标签" };
 
 
 export interface PendingDrop {
@@ -32,37 +38,61 @@ export interface PendingDrop {
 export default function App() {
   const [tab, setTab] = useState<TabKey>("impose");
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+  const [packingDrop, setPackingDrop] = useState<PendingDrop | null>(null);
   const [showLabelTab, setShowLabelTab] = useState(false);
+  const [showBoxplanTab, setShowBoxplanTab] = useState(false);
+  const [showProductTab, setShowProductTab] = useState(false);
 
   // 启动时读一次偏好；没存过就按隐藏处理
   useEffect(() => {
     api
       .allSettings()
-      .then((s) => setShowLabelTab(s[SHOW_LABEL_TAB_KEY] === "1"))
+      .then((s) => {
+        setShowLabelTab(s[SHOW_LABEL_TAB_KEY] === "1");
+        setShowBoxplanTab(s[SHOW_BOXPLAN_TAB_KEY] === "1");
+        setShowProductTab(s[SHOW_PRODUCT_TAB_KEY] !== "0");
+      })
       .catch(() => {});
   }, []);
 
-  // 开关被关掉时如果正停在箱唛页，退回拼版页
+  // 开关被关掉时如果正停在被隐藏的页，退回拼版页
   useEffect(() => {
     if (!showLabelTab && tab === "label") setTab("impose");
-  }, [showLabelTab, tab]);
+    if (!showBoxplanTab && tab === "boxplan") setTab("impose");
+    if (!showProductTab && tab === "product") setTab("impose");
+  }, [showLabelTab, showBoxplanTab, showProductTab, tab]);
 
-  // 全局系统拖放：把 PDF 拖进窗口任意位置 → 自动切到拼版页并添加
+  // 全局系统拖放：PDF → 拼版页；表格/图片 → 装箱单解析页
   useEffect(() => {
     let un: (() => void) | undefined;
+    const SHEET_OR_IMAGE = /\.(xlsx|xlsm|xls|csv|txt|tsv|png|jpe?g|webp|bmp)$/i;
     getCurrentWebview()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;
-        const paths = event.payload.paths.filter((p) => p.toLowerCase().endsWith(".pdf"));
-        if (paths.length === 0) return;
-        setTab("impose");
-        setPendingDrop({ paths, nonce: Date.now() });
+        const paths = event.payload.paths;
+        const pdfs = paths.filter((p) => p.toLowerCase().endsWith(".pdf"));
+        if (pdfs.length > 0) {
+          setTab("impose");
+          setPendingDrop({ paths: pdfs, nonce: Date.now() });
+          return;
+        }
+        const sheets = paths.filter((p) => SHEET_OR_IMAGE.test(p));
+        if (sheets.length > 0) {
+          setTab("packing");
+          setPackingDrop({ paths: sheets, nonce: Date.now() });
+        }
       })
       .then((u) => (un = u));
     return () => un?.();
   }, []);
 
-  const tabs = showLabelTab ? [BASE_TABS[0], LABEL_TAB, ...BASE_TABS.slice(1)] : BASE_TABS;
+  const tabs = [
+    BASE_TABS[0],
+    ...(showLabelTab ? [LABEL_TAB] : []),
+    ...(showBoxplanTab ? [BOXPLAN_TAB] : []),
+    ...(showProductTab ? [PRODUCT_TAB] : []),
+    ...BASE_TABS.slice(1),
+  ];
 
   return (
     <div className="app">
@@ -79,12 +109,23 @@ export default function App() {
       </nav>
       <main className="content">
         {tab === "impose" && <ImposePage pendingDrop={pendingDrop} />}
+        {tab === "packing" && <PackingPage pendingDrop={packingDrop} />}
+        {tab === "boxplan" && <BoxPlanPage />}
         {tab === "label" && <LabelPage />}
+        {tab === "product" && <ProductLabelPage />}
         {tab === "history" && <HistoryPage />}
         {tab === "settings" && (
-          <SettingsPage showLabelTab={showLabelTab} onShowLabelTab={setShowLabelTab} />
+          <SettingsPage
+            showLabelTab={showLabelTab}
+            onShowLabelTab={setShowLabelTab}
+            showBoxplanTab={showBoxplanTab}
+            onShowBoxplanTab={setShowBoxplanTab}
+            showProductTab={showProductTab}
+            onShowProductTab={setShowProductTab}
+          />
         )}
       </main>
     </div>
   );
 }
+

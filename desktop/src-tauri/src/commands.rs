@@ -134,6 +134,15 @@ pub struct ImposeResultDto {
     pub size_bytes: u64,
 }
 
+/// 自动打开成品的结果：app 用于界面提示（WPS PDF / WPS Office）。
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct OpenPdfResultDto {
+    pub app: String,
+    pub exe: String,
+}
+
 // ---------- 工具 ----------
 
 fn read_pdf(path: &str) -> Result<Vec<u8>, core::ImposeError> {
@@ -254,6 +263,188 @@ pub fn impose_pdfs(
         elapsed_ms: t0.elapsed().as_millis() as u64,
         size_bytes: std::fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0),
     })
+}
+
+// ---------- 自动打开 ----------
+
+/// 合成完成后用 WPS PDF 打开成品。
+///
+/// 不依赖系统默认 PDF 关联（本机可能仍关联 Edge），而是直接找 WPS 的
+/// `wpspdf.exe` 并用它启动文件；找不到 WPS 时返回 `wps_not_found`。
+#[tauri::command]
+pub fn open_pdf_in_wps(path: String) -> Result<OpenPdfResultDto, ApiError> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err(ApiError::new("io", format!("找不到要打开的文件：{path}")));
+    }
+    let exe = find_wps_exe()
+        .ok_or_else(|| ApiError::new("wps_not_found", "未检测到 WPS Office，请确认已安装 WPS"))?;
+    launch_detached(&exe, &path)
+        .map_err(|e| ApiError::new("io", format!("启动 WPS 失败：{e}")))?;
+    log::info!("已用 WPS 打开成品：{path}（{}）", exe.display());
+
+    let is_pdf = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("wpspdf.exe"));
+    Ok(OpenPdfResultDto {
+        app: if is_pdf { "WPS PDF" } else { "WPS Office" }.to_string(),
+        exe: exe.to_string_lossy().to_string(),
+    })
+}
+
+#[cfg(windows)]
+fn launch_detached(exe: &std::path::Path, path: &str) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    // GUI 程序独立运行，不等它退出；CREATE_NO_WINDOW 避免闪控制台
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new(exe)
+        .arg(path)
+        .current_dir(exe.parent().unwrap_or_else(|| std::path::Path::new(".")))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn launch_detached(_exe: &std::path::Path, _path: &str) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "当前系统不支持直接调用 WPS",
+    ))
+}
+
+#[cfg(not(windows))]
+fn find_wps_exe() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// 依次从 WPS 注册表安装目录、常见安装位置、App Paths 查找可执行文件。
+#[cfg(windows)]
+fn find_wps_exe() -> Option<std::path::PathBuf> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+
+    // 1) WPS 自己登记的安装目录（装在非系统盘也能找到，最可靠）
+    for (hive, sub) in [
+        (HKEY_CURRENT_USER, r"Software\Kingsoft\Office\6.0\common"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Kingsoft\Office\6.0\common"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Kingsoft\Office\6.0\common"),
+    ] {
+        if let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(sub, KEY_READ)
+            && let Ok(raw) = key.get_value::<String, _>("InstallRoot")
+        {
+            let raw = raw.trim().trim_matches('"');
+            if !raw.is_empty() {
+                roots.push(std::path::PathBuf::from(raw));
+            }
+        }
+    }
+
+    // 2) 常见安装位置兜底
+    for env in [
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+    ] {
+        if let Ok(base) = std::env::var(env) {
+            roots.push(
+                std::path::PathBuf::from(base)
+                    .join("Kingsoft")
+                    .join("WPS Office"),
+            );
+        }
+    }
+
+    // 3) App Paths 只登记 wps.exe 的机器：同目录一般也有 wpspdf.exe
+    for (hive, sub) in [
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wpspdf.exe",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wpspdf.exe",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\wpspdf.exe",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wps.exe",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wps.exe",
+        ),
+    ] {
+        if let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(sub, KEY_READ)
+            && let Ok(raw) = key.get_value::<String, _>("")
+        {
+            let raw = raw.trim().trim_matches('"');
+            if !raw.is_empty() {
+                let exe = std::path::PathBuf::from(raw);
+                if exe.is_file() {
+                    return prefer_wps_pdf(&exe);
+                }
+            }
+        }
+    }
+
+    roots.into_iter().find_map(|root| find_in_wps_root(&root))
+}
+
+/// 优先用 WPS PDF（wpspdf.exe）；只有 wps.exe 时退回 WPS Office。
+#[cfg(windows)]
+fn prefer_wps_pdf(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let is_wps = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("wps.exe"));
+    if is_wps {
+        let pdf = exe.with_file_name("wpspdf.exe");
+        if pdf.is_file() {
+            return Some(pdf);
+        }
+    }
+    Some(exe.to_path_buf())
+}
+
+#[cfg(windows)]
+fn find_in_wps_root(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    // InstallRoot 通常直接是版本目录（...\12.1.0.xxxxx），下面有 office6
+    if let Some(exe) = wps_exe_in(root) {
+        return Some(exe);
+    }
+    // 兜底路径是 ...\WPS Office：遍历版本子目录，新版本优先
+    let mut versions: Vec<std::path::PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    versions.sort();
+    versions.reverse();
+    versions.into_iter().find_map(|dir| wps_exe_in(&dir))
+}
+
+#[cfg(windows)]
+fn wps_exe_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    for rel in [
+        r"office6\wpspdf.exe",
+        "wpspdf.exe",
+        r"office6\wps.exe",
+        "wps.exe",
+    ] {
+        let exe = dir.join(rel);
+        if exe.is_file() {
+            return Some(exe);
+        }
+    }
+    None
 }
 
 /// 日志文件路径（设置页「打开日志目录」用）。
@@ -385,6 +576,40 @@ pub fn latest_label_doc(state: State<AppState>) -> Result<Option<core::LabelDocE
     db(&state).latest_label_doc().map_err(ApiError::from)
 }
 
+// ---------- 产品标签（50×30mm） ----------
+
+/// 生成结果：输出路径 + 总页数。
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ProductLabelResultDto {
+    pub path: String,
+    pub pages: usize,
+}
+
+/// 批量生成产品标签 PDF（一张一页）。
+#[tauri::command]
+pub fn generate_product_labels(
+    items: Vec<core::ProductLabelItem>,
+    out_path: String,
+) -> Result<ProductLabelResultDto, ApiError> {
+    let pages = core::total_labels(&items);
+    if pages == 0 {
+        return Err(ApiError::new("invalid", "请至少填写一行编码"));
+    }
+    let bytes = core::generate_product_labels(&items).map_err(ApiError::from)?;
+    std::fs::write(&out_path, &bytes).map_err(|e| ApiError::new("io", e.to_string()))?;
+    log::info!("产品标签已生成：{out_path}（{pages} 页）");
+    Ok(ProductLabelResultDto { path: out_path, pages })
+}
+
+/// 首页预览（base64 PNG），只排第一行。
+#[tauri::command]
+pub fn preview_product_label(items: Vec<core::ProductLabelItem>) -> Result<String, ApiError> {
+    let pdf = core::generate_product_label_preview(&items).map_err(ApiError::from)?;
+    let png = core::render_preview(&pdf, 150.0).map_err(ApiError::from)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
 // ---------- 设置 ----------
 
 #[tauri::command]
@@ -395,6 +620,146 @@ pub fn all_settings(state: State<AppState>) -> Result<std::collections::HashMap<
 #[tauri::command]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<(), ApiError> {
     db(&state).set_setting(&key, &value).map_err(ApiError::from)
+}
+
+// ---------- 装箱单解析 ----------
+
+/// 一条录货待办。字段名与 core::PackingItem 一致，前端直接渲染。
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PackingItemDto {
+    pub seq: u32,
+    pub name: String,
+    #[ts(type = "number")]
+    pub qty: i64,
+    pub qty_raw: String,
+    pub inbound: String,
+    pub destination: String,
+    pub waybill: String,
+    pub checked: bool,
+    /// name / qty / inbound / inbound_sci / mark_text / dup_mark
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PackingSheetDto {
+    pub items: Vec<PackingItemDto>,
+    pub destination: String,
+    pub waybill: String,
+    #[ts(type = "number")]
+    pub total_qty: i64,
+    #[ts(type = "number | null")]
+    pub expected_qty: Option<i64>,
+    /// 列映射说明：「按表头识别：名称=第1列 …」
+    pub mapping: String,
+    pub warnings: Vec<String>,
+    /// 截图识别用的引擎："paddle" / "system"；粘贴和 xlsx 路径为空
+    pub engine: String,
+}
+
+impl From<core::PackingSheet> for PackingSheetDto {
+    fn from(s: core::PackingSheet) -> Self {
+        Self {
+            items: s
+                .items
+                .into_iter()
+                .map(|i| PackingItemDto {
+                    seq: i.seq,
+                    name: i.name,
+                    qty: i.qty,
+                    qty_raw: i.qty_raw,
+                    inbound: i.inbound,
+                    destination: i.destination,
+                    waybill: i.waybill,
+                    checked: i.checked,
+                    issues: i.issues,
+                })
+                .collect(),
+            destination: s.destination,
+            waybill: s.waybill,
+            total_qty: s.total_qty,
+            expected_qty: s.expected_qty,
+            mapping: s.mapping,
+            warnings: s.warnings,
+            engine: String::new(),
+        }
+    }
+}
+
+/// 粘贴文本（Excel 直接复制 = 制表符分隔）→ 结构化待办。
+#[tauri::command]
+pub fn parse_packing_text(text: String) -> Result<PackingSheetDto, ApiError> {
+    if text.trim().is_empty() {
+        return Err(ApiError::new("empty", "先粘贴表格内容，或拖 xlsx 进来"));
+    }
+    Ok(core::parse_text(&text).into())
+}
+
+/// 拖进来的文件（xlsx / csv / txt）→ 结构化待办。
+#[tauri::command]
+pub fn parse_packing_file(path: String) -> Result<PackingSheetDto, ApiError> {
+    let sheet = core::parse_file(&path).map_err(|e| ApiError::new(e.code(), e.to_string()))?;
+    log::info!("装箱单解析：{path} → {} 条", sheet.items.len());
+    Ok(sheet.into())
+}
+
+/// 图片（截屏/拍照）→ 结构化待办：走 Windows 自带 OCR，离线免费。
+#[tauri::command]
+pub fn parse_packing_image(path: String) -> Result<PackingSheetDto, ApiError> {
+    #[cfg(windows)]
+    {
+        let sheet = crate::ocr::parse_image(&path).map_err(|e| ApiError::new("ocr", e))?;
+        log::info!("截图识别：{path} → {} 条", sheet.items.len());
+        let mut dto: PackingSheetDto = sheet.into();
+        dto.engine = crate::ocr::engine_name().to_string();
+        Ok(dto)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err(ApiError::new("ocr", "截图识别目前只支持 Windows"))
+    }
+}
+
+/// 把生成的 Markdown 清单写盘（路径由前端保存对话框给）。
+#[tauri::command]
+pub fn save_text_file(path: String, content: String) -> Result<(), ApiError> {
+    std::fs::write(&path, content)
+        .map_err(|e| ApiError::new("io", format!("写入 {path} 失败：{e}")))
+}
+
+/// 读日志尾部（给界面里的「日志」按钮用，不用让人去找文件）。
+#[tauri::command]
+pub fn read_log_tail(lines: Option<u32>) -> Result<String, ApiError> {
+    let path = crate::logging::log_path();
+    if path.as_os_str().is_empty() {
+        return Err(ApiError::new("log", "日志还没初始化"));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| ApiError::new("io", format!("读日志失败：{e}")))?;
+    let n = lines.unwrap_or(400).clamp(20, 5000) as usize;
+    let all: Vec<&str> = text.lines().collect();
+    let start = all.len().saturating_sub(n);
+    Ok(all[start..].join("\n"))
+}
+
+/// 清空当前日志（日志器持有的是追加句柄，这里截断同一个文件即可）。
+#[tauri::command]
+pub fn clear_log() -> Result<(), ApiError> {
+    let path = crate::logging::log_path();
+    if path.as_os_str().is_empty() {
+        return Err(ApiError::new("log", "日志还没初始化"));
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map_err(|e| ApiError::new("io", format!("清空日志失败：{e}")))?;
+    log::info!("日志已由用户在界面清空");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -459,5 +824,47 @@ mod tests {
         assert_eq!(sku.boxes, 2);
         assert!(!sku.new_flag, "newFlag 必须进 new_flag");
         assert_eq!(sku.quantities, "10*2,7");
+    }
+
+    /// 装箱单：命令层 → 前端 JSON 契约（camelCase）。
+    #[test]
+    fn packing_sheet_wire_format() {
+        let sheet = parse_packing_text(
+            "商品\t数量\t入库号\t标记\n门铰链\t10\tA1001\t1\n鱼鳞布\t8\tA1002\t".to_string(),
+        )
+        .unwrap();
+        assert_eq!(sheet.items.len(), 2);
+        assert_eq!(sheet.items[0].qty, 10);
+        assert!(sheet.items[0].checked);
+        assert_eq!(sheet.total_qty, 18);
+
+        let json = serde_json::to_value(&sheet).unwrap();
+        assert!(json["totalQty"].is_number(), "totalQty 必须是 number 不是 BigInt");
+        assert!(json["items"][0]["inbound"].is_string());
+        assert!(json["warnings"].is_array());
+    }
+
+    #[test]
+    fn packing_text_rejects_empty() {
+        assert!(parse_packing_text("   ".to_string()).is_err());
+    }
+
+    /// 版本目录里应优先选 wpspdf.exe；没有时退回 wps.exe。
+    #[cfg(windows)]
+    #[test]
+    fn wps_exe_lookup_prefers_pdf_executable() {
+        let root = std::env::temp_dir().join(format!("pdf-tool-wps-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let office = root.join("12.1.0.1").join("office6");
+        std::fs::create_dir_all(&office).unwrap();
+
+        std::fs::write(office.join("wps.exe"), b"").unwrap();
+        assert_eq!(wps_exe_in(&office).unwrap(), office.join("wps.exe"));
+
+        std::fs::write(office.join("wpspdf.exe"), b"").unwrap();
+        assert_eq!(wps_exe_in(&office).unwrap(), office.join("wpspdf.exe"));
+        assert_eq!(find_in_wps_root(&root).unwrap(), office.join("wpspdf.exe"));
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

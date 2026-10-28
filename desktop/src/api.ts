@@ -17,14 +17,22 @@ import type { LabelSku } from "./bindings/LabelSku";
 import type { LabelSpecDto } from "./bindings/LabelSpecDto";
 import type { LabelDocEntry } from "./bindings/LabelDocEntry";
 import type { LabelResultDto } from "./bindings/LabelResultDto";
+import type { ProductLabelItem } from "./bindings/ProductLabelItem";
+import type { ProductLabelResult } from "./bindings/ProductLabelResult";
+import type { OpenPdfResultDto } from "./bindings/OpenPdfResultDto";
+import type { PackingSheetDto } from "./bindings/PackingSheetDto";
+import type { PackingItemDto } from "./bindings/PackingItemDto";
 
 export type CropSpec = CropDto;
 export type ImposeFile = ImposeFileDto;
 export type ImposeOpts = ImposeOptsDto;
 export type ImposeResult = ImposeResultDto;
+export type OpenPdfResult = OpenPdfResultDto;
 export type { PdfInfo, PrintHistoryEntry, LabelSku, LabelDocEntry };
 export type LabelSpec = LabelSpecDto;
 export type LabelResult = LabelResultDto;
+export type { ProductLabelItem, ProductLabelResult };
+export type { PackingItemDto, PackingSheetDto };
 
 // ---------- 进度事件 ----------
 
@@ -47,6 +55,12 @@ export async function listenImposeProgress(
 
 /** 是否在页签栏显示「箱唛生成」（"1" = 显示，缺省 = 隐藏）。 */
 export const SHOW_LABEL_TAB_KEY = "show_label_tab";
+
+/** 是否在页签栏显示「箱规计划」（"1" = 显示，缺省 = 隐藏）。 */
+export const SHOW_BOXPLAN_TAB_KEY = "show_boxplan_tab";
+
+/** 是否在页签栏显示「产品标签」（"1" = 显示，缺省 = 隐藏）。 */
+export const SHOW_PRODUCT_TAB_KEY = "show_product_label_tab";
 
 // ---------- 错误 ----------
 
@@ -87,6 +101,8 @@ export function errorHint(e: unknown): string {
       return "（请检查参数，例如裁剪范围是否超过页面大小）";
     case "db":
       return "（本机历史库异常，可尝试重启程序）";
+    case "wps_not_found":
+      return "（未检测到 WPS Office；文件已合成，可手动打开）";
     default:
       return "";
   }
@@ -105,6 +121,9 @@ export const api = {
   // 拼版（outPath 先经 dialog 保存对话框取得）
   imposePdfs: (files: ImposeFile[], opts: ImposeOpts, outPath: string) =>
     invoke<ImposeResult>("impose_pdfs", { files, opts, outPath }),
+
+  // 用 WPS PDF 打开成品（不依赖系统默认 PDF 关联）
+  openPdfInWps: (path: string) => invoke<OpenPdfResult>("open_pdf_in_wps", { path }),
 
   // 打印历史
   addPrintHistory: (entry: {
@@ -128,8 +147,26 @@ export const api = {
   listLabelDocs: (limit = 50) => invoke<LabelDocEntry[]>("list_label_docs", { limit }),
   latestLabelDoc: () => invoke<LabelDocEntry | null>("latest_label_doc"),
 
+  // 产品标签（50×30mm）
+  previewProductLabel: (items: ProductLabelItem[]) =>
+    invoke<string>("preview_product_label", { items }),
+  generateProductLabels: (items: ProductLabelItem[], outPath: string) =>
+    invoke<ProductLabelResult>("generate_product_labels", { items, outPath }),
+
   // 日志
   logDir: () => invoke<string>("log_dir"),
+  readLogTail: (lines = 400) => invoke<string>("read_log_tail", { lines }),
+  clearLog: () => invoke<void>("clear_log"),
+
+  // 装箱单解析（粘贴文本 / 拖文件 → 按目的地+单号分组的待办）
+  parsePackingText: (text: string) =>
+    invoke<PackingSheetDto>("parse_packing_text", { text }),
+  parsePackingFile: (path: string) =>
+    invoke<PackingSheetDto>("parse_packing_file", { path }),
+  parsePackingImage: (path: string) =>
+    invoke<PackingSheetDto>("parse_packing_image", { path }),
+  saveTextFile: (path: string, content: string) =>
+    invoke<void>("save_text_file", { path, content }),
 
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),

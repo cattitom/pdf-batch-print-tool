@@ -8,9 +8,18 @@
 | 页签 | 功能 |
 |------|------|
 | 🖨 PDF 拼版 | 多 PDF 合并、按目标页数凑页/截取、逐份旋转、自动去白边/手动裁剪、文件间分隔页、进度条、输出名自动生成 |
-| 🏷 箱唛生成 | 一箱一页，Code128 条码（入库单号）+ 二维码（单号-S货架-箱号）+ 中文排版；固定 100×100mm 热敏标签；**默认隐藏，在「设置」里勾选后页签才出现**；实时预览（无需点按钮）；自动带出上次单据 |
+| 📋 录货清单 | 粘贴 Excel 表格、拖 xlsx/csv/txt，或**拖截图**（走 Windows 自带 OCR，离线免费）→ 自动拆成「目的地 + 单号」分组的录货待办；合并单元格自动铺开，单号/合计/入库号做校验标黄；可勾选、可导出 Markdown。截图识别会读丢个别格子，结果需人工核对（标黄行） |
+| 📦 箱规计划 | 粘贴参考/实际数据自动解析成对照表（周长/单件重量/体积重/模拟行）；**默认不占页签栏；设置页三击「其它设置」后勾选显示开关** |
+| 🏷 箱唛生成 | 一箱一页，Code128 条码（入库单号）+ 二维码（单号-S货架-箱号）+ 中文排版；固定 100×100mm 热敏标签；**默认不占页签栏；设置页三击「其它设置」后勾选显示开关**；实时预览（无需点按钮）；自动带出上次单据 |
 | 🕘 历史 | 打印/生成历史（SQLite 本机存储），可删除/清空 |
-| ⚙️ 设置 | 本机偏好（key-value） |
+| ⚙️ 设置 | 本机偏好（key-value）+ 默认折叠的隐藏页签开关 |
+
+### 隐藏页签
+
+「箱唛生成」「箱规计划」平时不出现在页签栏。两个显示开关默认也不显示：
+
+在「设置」页**三击「其它设置」标题**，才会展开「显示『箱唛生成』页签」「显示『箱规计划』页签」两个勾选框。
+勾选后页签常驻页签栏，取消勾选则隐藏；再次三击可收起两个开关。开关状态保存在本机数据库。
 
 ## 目录结构
 
@@ -18,7 +27,7 @@
 desktop/
 ├── src/                # React 前端
 │   ├── api.ts          #   后端命令的类型化封装（JSON 契约见 src-tauri/src/commands.rs）
-│   └── pages/          #   ImposePage / LabelPage / HistoryPage / SettingsPage
+│   └── pages/          #   ImposePage / BoxPlanPage / LabelPage / HistoryPage / SettingsPage
 ├── src-tauri/          # Tauri 壳 + 命令桥接层
 │   └── src/commands.rs #   13 个 command；文件传路径不走 IPC；进度走 impose-progress 事件
 ├── core/               # pdfimpose-core 核心库（与 UI 无关，可独立测试）
@@ -46,6 +55,22 @@ pnpm tauri dev        # 开发窗口（vite :1420 热更新）
 ```
 
 开发模式的日志同样写在 `%APPDATA%\com.hanlin.pdfprint\logs\app.log`。
+
+### 编译前置：LLVM（libclang）
+
+靠 `ocr-rs`（PaddleOCR + MNN）做截图识别，它的 build 脚本用 bindgen 生成 C 绑定，**需要 libclang**：
+
+```powershell
+scoop install llvm            # 或装 LLVM 官方包
+$env:LIBCLANG_PATH = "D:\Scoop\apps\llvm\current\bin"   # 当前终端生效；scoop 也会写用户环境变量
+```
+
+首次编译还会从 GitHub 下载 MNN 预编译包（约 12MB），之后走缓存。
+
+### OCR 模型（可选）
+
+`models/` 里放 PP-OCRv5 的 `det`/`rec` 和字典就启用 PaddleOCR，不放就自动回退 Windows 自带 OCR。
+下载命令见 [`models/README.md`](models/README.md)。
 
 ## 测试
 
