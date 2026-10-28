@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>箱规计划</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="箱规计划" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="appbar">
+    <h1>📦 箱规计划</h1>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="fields">
+        <div class="field">
+          <label for="refText">参考数据（粘贴原始格式，自动解析）</label>
+          <textarea id="refText" class="mono" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label for="newText">实际数据（粘贴原始格式，自动解析）</label>
+          <textarea id="newText" class="mono" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">对照表</div>
+      <div class="table-wrap">
+        <table class="main-table" id="mainTable">
+          <thead>
+            <tr>
+              <th>数据</th>
+              <th>数量/件</th>
+              <th>长 cm</th>
+              <th>宽 cm</th>
+              <th>高 cm</th>
+              <th>周长 cm</th>
+              <th>体积重</th>
+              <th>实重 kg</th>
+              <th>单件重量</th>
+              <th>单件体积重</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">模拟</div>
+      <div id="judgeLine" class="muted"></div>
+      <div id="formulaLine" class="muted mono"></div>
+      <label class="check">
+        <input type="checkbox" id="extraBox" />
+        <span id="extraLabel"></span>
+      </label>
+      <div id="candsWrap"></div>
+      <div id="outWrap"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">记录（本机保存）</div>
+      <div class="save-row">
+        <input id="recName" placeholder="记录名，默认用 客户-商品" />
+        <button class="btn" id="saveRec">保存当前</button>
+      </div>
+      <div id="recList" class="rec-list"></div>
+    </section>
+
+    <footer class="foot">
+      iOS：Safari 打开 → 分享 → 添加到主屏幕，即可全屏使用；数据保存在本机。
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
