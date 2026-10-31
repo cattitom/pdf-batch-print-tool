@@ -29,6 +29,11 @@ ts-rs = "12"
 log = { version = "0.4", features = ["std"] }
 # PaddleOCR（MNN 推理）：models/ 下有 .mnn 模型时优先用它，比系统 OCR 准
 ocr-rs = "2.4"
+# 手机出货：局域网小服务 + 二维码
+tiny_http = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# 枚举网卡挑局域网 IP（跳过 VPN / 虚拟网卡）
+local-ip-address = "0.6"
 
 # 查找 WPS 安装路径（读取注册表）
 [target.'cfg(windows)'.dependencies]
@@ -56,3 +61,5 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+

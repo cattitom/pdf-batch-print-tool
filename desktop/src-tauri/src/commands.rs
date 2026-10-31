@@ -8,6 +8,7 @@
 
 use base64::Engine as _;
 use pdfimpose_core as core;
+use crate::mobile::{self, MobileInfo, MobileRow, MobileShared};
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
 use std::sync::Mutex;
@@ -622,7 +623,7 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result
     db(&state).set_setting(&key, &value).map_err(ApiError::from)
 }
 
-// ---------- 录货清单：已录勾选 ----------
+// ---------- 出货清单：已录勾选 ----------
 
 /// 一条勾选记录，按「单号 + 入库号 + 商品名」认行。
 #[derive(Debug, Serialize, ts_rs::TS)]
@@ -669,7 +670,7 @@ pub fn clear_packing_checks(state: State<AppState>) -> Result<(), ApiError> {
 
 // ---------- 装箱单解析 ----------
 
-/// 一条录货待办。字段名与 core::PackingItem 一致，前端直接渲染。
+/// 一条出货待办。字段名与 core::PackingItem 一致，前端直接渲染。
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -746,12 +747,21 @@ pub fn parse_packing_text(text: String) -> Result<PackingSheetDto, ApiError> {
     Ok(core::parse_text(&text).into())
 }
 
-/// 拖进来的文件（xlsx / csv / txt）→ 结构化待办。
+/// 拖进来的文件（xlsx / xls / csv / txt）→ 结构化待办。
 #[tauri::command]
 pub fn parse_packing_file(path: String) -> Result<PackingSheetDto, ApiError> {
     let sheet = core::parse_file(&path).map_err(|e| ApiError::new(e.code(), e.to_string()))?;
     log::info!("装箱单解析：{path} → {} 条", sheet.items.len());
     Ok(sheet.into())
+}
+
+/// 指定 .xls 里的一张表来解析（云表格缓存恢复时用：上次看的是「11月」就还是「11月」）。
+#[tauri::command]
+pub fn parse_packing_xls(path: String, sheet: Option<String>) -> Result<PackingSheetDto, ApiError> {
+    let (parsed, picked, _) = core::parse_xls_file(&path, sheet.as_deref())
+        .map_err(|e| ApiError::new(e.code(), e.to_string()))?;
+    log::info!("装箱单解析：{path}（表 {picked}） → {} 条", parsed.items.len());
+    Ok(parsed.into())
 }
 
 /// 图片（截屏/拍照）→ 结构化待办：走 Windows 自带 OCR，离线免费。
@@ -771,6 +781,10 @@ pub fn parse_packing_image(path: String) -> Result<PackingSheetDto, ApiError> {
         Err(ApiError::new("ocr", "截图识别目前只支持 Windows"))
     }
 }
+
+// ---------- 从 WPS 云表格同步（出货清单） ----------
+// 实现见 commands/kdocs.rs：取数链路独立成模块，主文件只留入口。
+pub mod kdocs;
 
 /// 把生成的 Markdown 清单写盘（路径由前端保存对话框给）。
 #[tauri::command]
@@ -916,3 +930,78 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
+// ---------- 手机出货（局域网） ----------
+
+/// 手机端口令：存进本机设置，重启后不变；手机存书签就不用每次扫码。
+const MOBILE_TOKEN_KEY: &str = "mobile_token";
+
+fn mobile_token(state: &State<'_, AppState>) -> Result<String, ApiError> {
+    let guard = db(state);
+    if let Some(t) = guard.get_setting(MOBILE_TOKEN_KEY).map_err(ApiError::from)? {
+        if t.len() >= 8 {
+            return Ok(t);
+        }
+    }
+    let t = mobile::new_token();
+    guard
+        .set_setting(MOBILE_TOKEN_KEY, &t)
+        .map_err(ApiError::from)?;
+    Ok(t)
+}
+
+#[tauri::command]
+pub fn mobile_start(
+    state: State<'_, AppState>,
+    mobile_state: State<'_, MobileShared>,
+    rows: Vec<MobileRow>,
+) -> Result<MobileInfo, ApiError> {
+    let token = mobile_token(&state)?;
+    mobile::start(&mobile_state, rows, token).map_err(|e| ApiError::new("mobile", e))
+}
+
+#[tauri::command]
+pub fn mobile_reset_token(
+    state: State<'_, AppState>,
+    mobile_state: State<'_, MobileShared>,
+) -> Result<MobileInfo, ApiError> {
+    let rows = mobile::rows(&mobile_state);
+    mobile::stop(&mobile_state);
+    db(&state)
+        .set_setting(MOBILE_TOKEN_KEY, "")
+        .map_err(ApiError::from)?;
+    let token = mobile_token(&state)?;
+    mobile::start(&mobile_state, rows, token).map_err(|e| ApiError::new("mobile", e))
+}
+
+#[tauri::command]
+pub fn mobile_sync(state: State<'_, MobileShared>, rows: Vec<MobileRow>) {
+    mobile::sync(&state, rows);
+}
+
+#[tauri::command]
+pub fn mobile_rows(state: State<'_, MobileShared>) -> Vec<MobileRow> {
+    mobile::rows(&state)
+}
+
+#[tauri::command]
+pub fn mobile_set_check(
+    state: State<'_, MobileShared>,
+    waybill: String,
+    inbound: String,
+    name: String,
+    checked: bool,
+) {
+    mobile::set_check(&state, &waybill, &inbound, &name, checked);
+}
+
+#[tauri::command]
+pub fn mobile_stop(state: State<'_, MobileShared>) {
+    mobile::stop(&state);
+}
+
+#[tauri::command]
+pub fn mobile_info(state: State<'_, MobileShared>) -> Option<MobileInfo> {
+    mobile::info(&state)
+}
+
+

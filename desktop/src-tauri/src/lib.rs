@@ -1,5 +1,6 @@
-mod commands;
+pub mod commands;
 mod logging;
+mod mobile;
 #[cfg(windows)]
 mod ocr;
 
@@ -22,6 +23,7 @@ pub fn run() {
             );
             let state = commands::init_state(app)?;
             app.manage(state);
+            app.manage(mobile::new_shared());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -48,10 +50,22 @@ pub fn run() {
             commands::parse_packing_text,
             commands::parse_packing_file,
             commands::parse_packing_image,
+            commands::parse_packing_xls,
+            commands::kdocs::sync_kdocs_packing,
             commands::save_text_file,
             commands::read_log_tail,
             commands::clear_log,
+            commands::mobile_start,
+            commands::mobile_reset_token,
+            commands::mobile_sync,
+            commands::mobile_set_check,
+            commands::mobile_rows,
+            commands::mobile_stop,
+            commands::mobile_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+

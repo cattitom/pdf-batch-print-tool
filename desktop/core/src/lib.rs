@@ -19,6 +19,7 @@ pub mod impose;
 pub mod labels;
 pub mod numbers;
 pub mod parse_packing;
+pub mod xls;
 pub mod product_label;
 pub mod sep;
 
@@ -41,7 +42,7 @@ pub use labels::{
     ParsedQuantity,
 };
 pub use parse_packing::{
-    parse_file, parse_grid, parse_text, PackingError, PackingItem, PackingSheet,
+    parse_file, parse_grid, parse_text, parse_xls_file, PackingError, PackingItem, PackingSheet,
 };
 pub use product_label::{
     generate_product_label_preview, generate_product_labels, total_labels, ProductLabelItem,

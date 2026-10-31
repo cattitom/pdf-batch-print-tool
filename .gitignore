@@ -3,6 +3,7 @@ target/
 target-test/
 node_modules/
 dist/
+dist-build/
 dist-ssr/
 /gen/schemas/
 
@@ -47,3 +48,12 @@ desktop/models/*
 
 # ---- 临时截图（oil-ui 调试用）----
 /shots/
+
+# ---- kdocs 抓数用的独立浏览器配置（含登录态 cookie，绝不入库）----
+/.wps-profile/
+/.wps-profile-*/
+
+# ---- 临时脚本/预览 fixture ----
+/.tmp/
+/.npm-cache/
+/oil-ui-work/

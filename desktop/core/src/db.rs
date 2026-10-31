@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 "#;
 
-/// v2：录货清单的「已录」勾选。按「单号 + 入库号 + 商品名」认行，
+/// v2：出货清单的「已录」勾选。按「单号 + 入库号 + 商品名」认行，
 /// 数量改了不影响，重新解析同一份表时还能认回来。
 const SCHEMA_V2: &str = r#"
 CREATE TABLE IF NOT EXISTS packing_checks (
@@ -160,7 +160,7 @@ impl Db {
         Ok(())
     }
 
-    // ---------- 录货清单的「已录」勾选 ----------
+    // ---------- 出货清单的「已录」勾选 ----------
 
     pub fn set_packing_check(
         &self,

@@ -23,6 +23,7 @@ import type { ProductLabelResult } from "./bindings/ProductLabelResult";
 import type { OpenPdfResultDto } from "./bindings/OpenPdfResultDto";
 import type { PackingSheetDto } from "./bindings/PackingSheetDto";
 import type { PackingItemDto } from "./bindings/PackingItemDto";
+import type { KdocsSyncDto } from "./bindings/KdocsSyncDto";
 
 export type CropSpec = CropDto;
 export type ImposeFile = ImposeFileDto;
@@ -33,7 +34,7 @@ export type { PdfInfo, PrintHistoryEntry, LabelSku, LabelDocEntry };
 export type LabelSpec = LabelSpecDto;
 export type LabelResult = LabelResultDto;
 export type { ProductLabelItem, ProductLabelResult };
-export type { PackingItemDto, PackingSheetDto };
+export type { PackingItemDto, PackingSheetDto, KdocsSyncDto };
 
 // ---------- 进度事件 ----------
 
@@ -109,6 +110,32 @@ export function errorHint(e: unknown): string {
   }
 }
 
+
+// ---------- 手机出货（局域网） ----------
+
+/** 手机端一行：只带勾选要用的字段。 */
+export interface MobileRowDto {
+  waybill: string;
+  inbound: string;
+  name: string;
+  customer: string;
+  qty: number;
+  checked: boolean;
+  issues: string[];
+  /** 既没入库号也没单号：不能标已出（桌面/手机都封），但照常算未出、照常下发。 */
+  blocked: boolean;
+}
+
+export interface MobileInfoDto {
+  url: string;
+  /** 所有可试的地址，第一个是二维码里的 */
+  urls: string[];
+  token: string;
+  port: number;
+  qrSvg: string;
+  /** 没找到局域网地址时的提示 */
+  warn: string | null;
+}
 // ---------- 命令封装 ----------
 
 export const api = {
@@ -162,16 +189,37 @@ export const api = {
     invoke<PackingSheetDto>("parse_packing_file", { path }),
   parsePackingImage: (path: string) =>
     invoke<PackingSheetDto>("parse_packing_image", { path }),
+  /** 指定 .xls 里的一张表解析（云表格缓存恢复用；sheet 省略 = 自动挑最新的来货登记表） */
+  parsePackingXls: (path: string, sheet?: string | null) =>
+    invoke<PackingSheetDto>("parse_packing_xls", { path, sheet: sheet ?? null }),
+  // WPS 云表格同步：借已登录的 Chrome 拉 .xls → Rust 直接解析（不依赖 Python）。
+  // sheet 传 null = 自动挑最新一张来货登记表；传表名 = 只重解析那张（用刚下的文件）
+  syncKdocsPacking: (sheet?: string | null) =>
+    invoke<KdocsSyncDto>("sync_kdocs_packing", { sheet: sheet ?? null }),
   saveTextFile: (path: string, content: string) =>
     invoke<void>("save_text_file", { path, content }),
+
+  // 手机出货：桌面端起局域网服务，手机浏览器勾选
+  mobileStart: (rows: MobileRowDto[]) => invoke<MobileInfoDto>("mobile_start", { rows }),
+  mobileSync: (rows: MobileRowDto[]) => invoke<void>("mobile_sync", { rows }),
+  mobileSetCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>
+    invoke<void>("mobile_set_check", { waybill, inbound, name, checked }),
+  mobileRows: () => invoke<MobileRowDto[]>("mobile_rows"),
+  mobileResetToken: () => invoke<MobileInfoDto>("mobile_reset_token"),
+  mobileStop: () => invoke<void>("mobile_stop"),
+  mobileInfo: () => invoke<MobileInfoDto | null>("mobile_info"),
 
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
 
-  // 录货清单：已录勾选（按 单号 + 入库号 + 商品名 认行）
+  // 出货清单：已录勾选（按 单号 + 入库号 + 商品名 认行）
   setPackingCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>
     invoke<void>("set_packing_check", { waybill, inbound, name, checked }),
   listPackingChecks: () => invoke<PackingCheckDto[]>("list_packing_checks"),
   clearPackingChecks: () => invoke<void>("clear_packing_checks"),
 };
+
+
+
+
