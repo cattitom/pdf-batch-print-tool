@@ -369,6 +369,13 @@ export default function BoxPlanPage() {
 
   return (
     <div className="page">
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">箱规计划</h1>
+          <p className="page-sub">粘贴参考与实际数据，自动算周长、体积重和模拟箱规</p>
+        </div>
+      </header>
+
       {/* 数据录入：两个粘贴框 */}
       <div className="form-grid boxplan-inputs">
         <div className="field grow">

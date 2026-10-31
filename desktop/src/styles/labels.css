@@ -1,0 +1,14 @@
+/* 产品标签
+   —— 从 src/App.css 拆出（2026-10-31），顺序与拆分前一致，别在中间插新样式。 */
+
+/* ---------- 产品标签 ---------- */
+
+.product-label-table td {
+  vertical-align: middle;
+}
+.product-label-table td input:not([type="number"]) {
+  width: 100%;
+}
+.product-label-table td input[type="number"] {
+  text-align: center;
+}

@@ -1,6 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Menu } from "antd";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import {
+  BarcodeOutlined,
+  FilePdfOutlined,
+  FolderOpenOutlined,
+  InboxOutlined,
+  PrinterOutlined,
+  SettingOutlined,
+  TagsOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
 import { api, SHOW_BOXPLAN_TAB_KEY, SHOW_LABEL_TAB_KEY, SHOW_PRODUCT_TAB_KEY } from "./api";
 import ImposePage from "./pages/ImposePage";
 import LabelPage from "./pages/LabelPage";
@@ -15,19 +25,19 @@ type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "settings
 interface TabDef {
   key: TabKey;
   label: string;
+  icon: ReactNode;
 }
 
 const BASE_TABS: TabDef[] = [
-  { key: "impose", label: "🖨 PDF 拼版" },
-  { key: "packing", label: "📋 录货清单" },
-  { key: "settings", label: "⚙️ 设置" },
+  { key: "impose", label: "PDF 拼版", icon: <FilePdfOutlined /> },
+  { key: "packing", label: "出货清单", icon: <UnorderedListOutlined /> },
+  { key: "settings", label: "设置", icon: <SettingOutlined /> },
 ];
 
-/** 箱唛、箱规、产品标签不常用：默认不出现在页签栏，在设置里开启后常驻。 */
-const LABEL_TAB: TabDef = { key: "label", label: "🏷 箱唛生成" };
-const BOXPLAN_TAB: TabDef = { key: "boxplan", label: "📦 箱规计划" };
-const PRODUCT_TAB: TabDef = { key: "product", label: "🏷 产品标签" };
-
+/** 箱唛、箱规、产品标签不常用：默认不出现在导航栏，在设置里开启后常驻。 */
+const LABEL_TAB: TabDef = { key: "label", label: "箱唛生成", icon: <BarcodeOutlined /> };
+const BOXPLAN_TAB: TabDef = { key: "boxplan", label: "箱规计划", icon: <InboxOutlined /> };
+const PRODUCT_TAB: TabDef = { key: "product", label: "产品标签", icon: <TagsOutlined /> };
 
 export interface PendingDrop {
   paths: string[];
@@ -94,20 +104,52 @@ export default function App() {
     BASE_TABS[2],
   ];
 
+  const openLogDir = async () => {
+    try {
+      const p = await api.logDir();
+      await revealItemInDir(p);
+    } catch {
+      // 日志目录打不开不该打断主流程
+    }
+  };
+
   return (
     <div className="app">
-      <Menu
-        mode="horizontal"
-        selectedKeys={[tab]}
-        onClick={({ key }) => setTab(key as TabKey)}
-        items={tabs.map((t) => ({ key: t.key, label: t.label }))}
-        style={{
-          paddingInline: 16,
-          background: "#fffefb",
-          borderBottom: "1px solid #e5e1d9",
-          lineHeight: "46px",
-        }}
-      />
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            <PrinterOutlined />
+          </div>
+          <div>
+            <div className="brand-name">批量打印</div>
+            <div className="brand-sub">PDF 拼版工具</div>
+          </div>
+        </div>
+
+        <nav className="nav">
+          <div className="nav-label">工作台</div>
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              className={`tab${tab === t.key ? " active" : ""}`}
+              onClick={() => setTab(t.key)}
+              aria-current={tab === t.key ? "page" : undefined}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-foot">
+          <button className="sidebar-link" onClick={openLogDir} title="打开日志目录（报障时附上 app.log）">
+            <FolderOpenOutlined />
+            日志目录
+          </button>
+          <span className="sidebar-ver">v0.1.0</span>
+        </div>
+      </aside>
+
       <main className="content">
         {/* 各页保持挂载、只切显隐：切走再回来时表格、勾选、筛选都还在 */}
         <div style={{ display: tab === "impose" ? "block" : "none" }}>
@@ -139,4 +181,3 @@ export default function App() {
     </div>
   );
 }
-

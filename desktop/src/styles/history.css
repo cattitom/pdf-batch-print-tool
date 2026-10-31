@@ -1,0 +1,81 @@
+/* 历史弹窗
+   —— 从 src/App.css 拆出（2026-10-31），顺序与拆分前一致，别在中间插新样式。 */
+
+/* ---------- 历史弹窗 ---------- */
+
+.hist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.hist-item:hover {
+  background: #f5f6f7;
+  border-color: var(--border);
+}
+.hist-icon {
+  flex-shrink: 0;
+  font-size: 17px;
+  line-height: 1;
+}
+.hist-icon.pdf {
+  color: #e0605a;
+}
+.hist-icon.txt {
+  color: #35a37c;
+}
+.hist-main {
+  flex: 1;
+  min-width: 0;
+}
+.hist-name {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hist-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.hist-meta .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #d7dde7;
+}
+.hist-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  color: #adb2b8;
+  direction: rtl;
+  text-align: left;
+}
+.hist-actions {
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  opacity: 0.45;
+  transition: opacity 0.12s;
+}
+.hist-item:hover .hist-actions {
+  opacity: 1;
+}

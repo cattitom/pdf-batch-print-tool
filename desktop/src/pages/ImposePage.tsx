@@ -3,6 +3,17 @@ import { Fragment, useCallback, useEffect, useState, type ReactElement } from "r
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { tempDir, join } from "@tauri-apps/api/path";
 import {
+  CloseOutlined,
+  ExportOutlined,
+  EyeOutlined,
+  FilePdfOutlined,
+  FileTextOutlined,
+  InboxOutlined,
+  PlusOutlined,
+  PrinterOutlined,
+  SplitCellsOutlined,
+} from "@ant-design/icons";
+import {
   api,
   errorHint,
   errorText,
@@ -40,7 +51,8 @@ function toCropSpec(r: FileRow): CropSpec | null {
   return null;
 }
 
-function buildOutputName(rows: FileRow[]): string {  if (rows.length === 0) {
+function buildOutputName(rows: FileRow[]): string {
+  if (rows.length === 0) {
     const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
     return `批量打印_${ts}.pdf`;
   }
@@ -62,8 +74,6 @@ function buildOutputName(rows: FileRow[]): string {  if (rows.length === 0) {
   if (base.length > MAX_BASE) base = base.slice(0, MAX_BASE);
   return `${base}.pdf`;
 }
-
-// ---------- 组件 ----------
 
 /** 页码范围文字：第 a–b 页 / 第 a 页 */
 function rangeText(start: number, count: number): string {
@@ -105,7 +115,9 @@ function SequenceBar({ rows, sepPages }: { rows: FileRow[]; sepPages: number }) 
         <span className="t">
           {i + 1}. {r.name}
         </span>
-        <span className="m">{n} 页</span>
+        <span className="m">
+          {n} 页{r.rotate ? ` · ${r.rotate}°` : ""}
+        </span>
         {badges.length > 0 ? (
           badges.map((b) => (
             <span className="b" key={b}>
@@ -122,21 +134,30 @@ function SequenceBar({ rows, sepPages }: { rows: FileRow[]; sepPages: number }) 
 
   const total = contentTotal + sepTotal;
   return (
-    <div className="seq-wrap">
-      <div className="seq-title">拼版排布</div>
-      <div className="seq-flow">
-        {parts.map((p, i) => (
-          <Fragment key={i}>
-            {i > 0 && <span className="sq-arrow">›</span>}
-            {p}
-          </Fragment>
-        ))}
+    <section className="card">
+      <div className="card-head">
+        <span className="card-title">拼版排布</span>
+        <span className="card-sub">
+          共 {rows.length} 个文件 · 内容 {contentTotal} 页 + 分隔 {sepTotal} 页
+        </span>
+        <div className="spacer" />
+        <span className="card-sub">
+          输出 <b style={{ color: "var(--text)", fontSize: 13 }}>{total}</b> 页
+        </span>
       </div>
-      <div className="seq-total">
-        共 {rows.length} 个文件 · 内容页 {contentTotal} 页 + 分隔页 {sepTotal} 页 ={" "}
-        <b>输出 {total} 页</b>
+      <div className="card-body">
+        <div className="seq-wrap">
+          <div className="seq-flow">
+            {parts.map((p, i) => (
+              <Fragment key={i}>
+                {i > 0 && <span className="sq-arrow">›</span>}
+                {p}
+              </Fragment>
+            ))}
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -327,184 +348,307 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
     }
   };
 
+  const inputPages = rows.reduce((a, r) => a + r.pages, 0);
+  const contentPages = rows.reduce((a, r) => a + Math.max(1, r.targetPages), 0);
+  const sepTotal = rows.length > 1 ? (rows.length - 1) * sepPages : 0;
+
   return (
     <div className="page">
-      {/* 顶栏操作 */}
-      <div className="toolbar">
-        <button className="btn primary" onClick={addFiles} disabled={busy}>
-          ＋ 添加 PDF
-        </button>
-        <div className="field">
-          <label>默认目标页数</label>
-          <input
-            type="number"
-            min={1}
-            value={defaultTarget}
-            onChange={(e) => {
-              const v = Math.max(1, +e.target.value || 1);
-              setDefaultTarget(v);
-              // 默认值联动：所有已添加文件的目标页数同步更新
-              setRows((prev) => prev.map((r) => ({ ...r, targetPages: v })));
-            }}
-          />
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">PDF 拼版</h1>
+          <p className="page-sub">多个 PDF 合成一份，按目标页数凑页，文件之间自动补分隔页</p>
         </div>
-        <div className="spacer" />
-        <HistoryButton />
-        <button className="btn big" onClick={() => runImpose(false)} disabled={busy || rows.length === 0}>
-          {busy && busyAction === "compose" ? "合成中…" : "🖨 仅合成"}
-        </button>
-        <button className="btn primary big" onClick={() => runImpose(true)} disabled={busy || rows.length === 0}>
-          {busy && busyAction === "composeOpen" ? "合成中…" : "📄 合成并打开 WPS PDF"}
-        </button>
-      </div>
+        <div className="page-actions">
+          <HistoryButton />
+          <button className="btn" onClick={() => runImpose(false)} disabled={busy || rows.length === 0}>
+            {busy && busyAction === "compose" ? "合成中…" : "仅合成"}
+          </button>
+          <button className="btn primary big" onClick={() => runImpose(true)} disabled={busy || rows.length === 0}>
+            {busy && busyAction === "composeOpen" ? "合成中…" : "合成并打开 WPS PDF"}
+          </button>
+        </div>
+      </header>
 
-      {/* 文件列表 */}
+      {rows.length > 0 && (
+        <section className="kpi-row">
+          <div className="kpi">
+            <div className="kpi-label">
+              <FilePdfOutlined />
+              文件
+            </div>
+            <div className="kpi-value">
+              {rows.length}
+              <small>个</small>
+            </div>
+            <div className="kpi-hint">按队列顺序合并</div>
+          </div>
+          <div className="kpi">
+            <div className="kpi-label">
+              <FileTextOutlined />
+              输入页
+            </div>
+            <div className="kpi-value">
+              {inputPages}
+              <small>页</small>
+            </div>
+            <div className="kpi-hint">原始内容总量</div>
+          </div>
+          <div className="kpi">
+            <div className="kpi-label">
+              <PrinterOutlined />
+              输出页
+            </div>
+            <div className="kpi-value">
+              {contentPages + sepTotal}
+              <small>页</small>
+            </div>
+            <div className="kpi-hint">
+              内容 {contentPages} 页 + 分隔 {sepTotal} 页
+            </div>
+          </div>
+          <div className="kpi">
+            <div className="kpi-label">
+              <SplitCellsOutlined />
+              分隔页
+            </div>
+            <div className="kpi-value">
+              {sepTotal}
+              <small>页</small>
+            </div>
+            <div className="kpi-hint">每个文件 {sepPages} 页</div>
+          </div>
+        </section>
+      )}
+
       {rows.length === 0 ? (
-        <div className="empty" onClick={addFiles}>
-          <div className="empty-icon">📄</div>
-          <div>点击添加 PDF 文件，开始拼版</div>
-          <div className="empty-sub">支持多选，也可直接把 PDF 拖进本窗口；用 ↑↓ 调整合并顺序</div>
+        <div className="empty lg" onClick={addFiles}>
+          <div className="empty-icon">
+            <InboxOutlined />
+          </div>
+          <div className="empty-title">把 PDF 拖到这里，或点击添加</div>
+          <div className="empty-sub">
+            支持多选 · 合并顺序用 ↑↓ 调整 · 每个文件可单独设页数 / 旋转 / 裁剪
+          </div>
+          <div className="empty-actions">
+            <button
+              className="btn primary"
+              onClick={(e) => {
+                e.stopPropagation();
+                addFiles();
+              }}
+            >
+              <PlusOutlined />
+              选择 PDF
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="file-list">
-          {rows.map((r, idx) => (
-            <div key={r.uid} className="file-card">
-              <div className="reorder">
-                <button className="btn sm" disabled={idx === 0} onClick={() => move(idx, -1)} title="上移">
-                  ↑
-                </button>
-                <button
-                  className="btn sm"
-                  disabled={idx === rows.length - 1}
-                  onClick={() => move(idx, 1)}
-                  title="下移"
-                >
-                  ↓
-                </button>
-              </div>
-              <div className="file-index">{idx + 1}</div>
-              <div className="file-main">
-                <div className="file-name" title={r.path}>
-                  {r.name}
-                </div>
-                <div className="file-meta">
-                  原 {r.pages} 页 · {r.widthMm}×{r.heightMm}mm
-                </div>
-              </div>
-              <div className="file-controls">
-                <button
-                  className="btn preview-btn"
-                  onClick={() => previewFile(r)}
-                  disabled={busy}
-                  title="按当前设置预览该文件"
-                >
-                  👁 预览
-                </button>
-                <div className="field">
-                  <label>目标页数</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={r.targetPages}
-                    onChange={(e) => patch(r.uid, { targetPages: Math.max(1, +e.target.value || 1) })}
-                  />
-                </div>
-                <div className="field">
-                  <label>旋转</label>
-                  <select value={r.rotate} onChange={(e) => patch(r.uid, { rotate: +e.target.value })}>
-                    {ROTATIONS.map((a) => (
-                      <option key={a} value={a}>
-                        {a === 0 ? "不旋转" : `${a}°`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>裁剪</label>
-                  <select
-                    value={r.cropMode}
-                    onChange={(e) => patch(r.uid, { cropMode: e.target.value as FileRow["cropMode"] })}
-                  >
-                    <option value="none">不裁剪</option>
-                    <option value="auto">自动去白边</option>
-                    <option value="manual">手动裁剪</option>
-                  </select>
-                </div>
-                {r.cropMode === "auto" && (
-                  <div className="field">
-                    <label>留白 mm</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      value={r.autoMarginMm}
-                      onChange={(e) => patch(r.uid, { autoMarginMm: Math.max(0, +e.target.value || 0) })}
-                    />
+        <section className="card">
+          <div className="card-head">
+            <span className="card-title">文件队列</span>
+            <span className="card-sub">{rows.length} 个文件 · 按顺序合并</span>
+            <div className="spacer" />
+            <button className="btn soft sm" onClick={addFiles} disabled={busy}>
+              <PlusOutlined />
+              添加 PDF
+            </button>
+          </div>
+          <div className="card-body tight">
+            <div className="file-list">
+              {rows.map((r, idx) => (
+                <div key={r.uid} className="file-card">
+                  <div className="reorder">
+                    <button
+                      className="btn"
+                      disabled={idx === 0}
+                      onClick={() => move(idx, -1)}
+                      title="上移"
+                      aria-label="上移"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={idx === rows.length - 1}
+                      onClick={() => move(idx, 1)}
+                      title="下移"
+                      aria-label="下移"
+                    >
+                      ▼
+                    </button>
                   </div>
-                )}
-                {r.cropMode === "manual" && (
-                  <div className="manual-crop">
-                    {(["topMm", "rightMm", "bottomMm", "leftMm"] as const).map((k) => (
-                      <div className="field mini" key={k}>
-                        <label>{{ topMm: "上", rightMm: "右", bottomMm: "下", leftMm: "左" }[k]} mm</label>
+                  <div className="file-index">{idx + 1}</div>
+                  <div className="file-main">
+                    <div className="file-name" title={r.path}>
+                      {r.name}
+                    </div>
+                    <div className="file-meta">
+                      <span>
+                        原 {r.pages} 页 · {r.widthMm}×{r.heightMm} mm
+                      </span>
+                      <span className="file-dir" title={r.path}>
+                        {r.path.slice(0, Math.max(0, r.path.lastIndexOf("\\")))}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="file-controls">
+                    <button
+                      className="btn preview-btn"
+                      onClick={() => previewFile(r)}
+                      disabled={busy}
+                      title="按当前设置预览该文件"
+                    >
+                      <EyeOutlined />
+                      预览
+                    </button>
+                    <label className="ctl">
+                      页数
+                      <input
+                        type="number"
+                        min={1}
+                        value={r.targetPages}
+                        onChange={(e) => patch(r.uid, { targetPages: Math.max(1, +e.target.value || 1) })}
+                      />
+                    </label>
+                    <label className="ctl">
+                      旋转
+                      <select value={r.rotate} onChange={(e) => patch(r.uid, { rotate: +e.target.value })}>
+                        {ROTATIONS.map((a) => (
+                          <option key={a} value={a}>
+                            {a === 0 ? "不旋转" : `${a}°`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="ctl">
+                      裁剪
+                      <select
+                        value={r.cropMode}
+                        onChange={(e) => patch(r.uid, { cropMode: e.target.value as FileRow["cropMode"] })}
+                      >
+                        <option value="none">不裁剪</option>
+                        <option value="auto">自动去白边</option>
+                        <option value="manual">手动裁剪</option>
+                      </select>
+                    </label>
+                    {r.cropMode === "auto" && (
+                      <label className="ctl">
+                        留白
                         <input
                           type="number"
                           min={0}
-                          value={r.manual[k]}
+                          step={0.5}
+                          style={{ width: 52 }}
+                          value={r.autoMarginMm}
                           onChange={(e) =>
-                            patch(r.uid, { manual: { ...r.manual, [k]: Math.max(0, +e.target.value || 0) } })
+                            patch(r.uid, { autoMarginMm: Math.max(0, +e.target.value || 0) })
                           }
                         />
+                        mm
+                      </label>
+                    )}
+                    {r.cropMode === "manual" && (
+                      <div className="manual-crop">
+                        {(
+                          [
+                            ["topMm", "上"],
+                            ["rightMm", "右"],
+                            ["bottomMm", "下"],
+                            ["leftMm", "左"],
+                          ] as const
+                        ).map(([k, label]) => (
+                          <label className="ctl" key={k}>
+                            {label}
+                            <input
+                              type="number"
+                              min={0}
+                              style={{ width: 44 }}
+                              value={r.manual[k]}
+                              onChange={(e) =>
+                                patch(r.uid, {
+                                  manual: { ...r.manual, [k]: Math.max(0, +e.target.value || 0) },
+                                })
+                              }
+                            />
+                          </label>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                    <button className="file-del" onClick={() => remove(r.uid)} title="移除" aria-label="移除">
+                      <CloseOutlined />
+                    </button>
                   </div>
-                )}
-                <button className="btn danger" onClick={() => remove(r.uid)} title="移除">
-                  ✕
-                </button>
-              </div>
+                </div>
+              ))}
             </div>
-          ))}
-          <SequenceBar rows={rows} sepPages={sepPages} />
-        </div>
+          </div>
+        </section>
       )}
 
-      {/* 全局设置 */}
-      <div className="global-opts">
-        <div className="field">
-          <label>分隔页数量 / 文件</label>
-          <input type="number" min={0} value={sepPages} onChange={(e) => setSepPages(Math.max(0, +e.target.value || 0))} />
+      <section className="card">
+        <div className="card-head">
+          <span className="card-title">输出设置</span>
+          <span className="card-sub">保存到第一个源文件所在文件夹，重名自动加 (1)</span>
         </div>
-        {sepPages > 0 && (
-          <div className="field grow">
-            <label>分隔页文字</label>
-            <input value={sepText} onChange={(e) => setSepText(e.target.value)} />
+        <div className="card-body">
+          <div className="opts-row">
+            <div className="field" style={{ width: 86 }}>
+              <label>分隔页数量</label>
+              <input
+                type="number"
+                min={0}
+                value={sepPages}
+                onChange={(e) => setSepPages(Math.max(0, +e.target.value || 0))}
+              />
+            </div>
+            <div className="field" style={{ width: 240 }}>
+              <label>分隔页文字</label>
+              <input
+                value={sepText}
+                onChange={(e) => setSepText(e.target.value)}
+                disabled={sepPages === 0}
+                title="分隔页上印的文字"
+              />
+            </div>
+            <div className="field" style={{ width: 168 }}>
+              <label>页码</label>
+              <label className="check-line">
+                <input type="checkbox" checked={pageNum} onChange={(e) => setPageNum(e.target.checked)} />
+                <span>内容页右下角编号</span>
+              </label>
+            </div>
+            <div className="field" style={{ width: 96 }}>
+              <label title="新加入的文件按这个页数">默认页数</label>
+              <input
+                type="number"
+                min={1}
+                value={defaultTarget}
+                title="新加入的文件按这个页数"
+                onChange={(e) => {
+                  const v = Math.max(1, +e.target.value || 1);
+                  setDefaultTarget(v);
+                  // 默认值联动：所有已添加文件的目标页数同步更新
+                  setRows((prev) => prev.map((r) => ({ ...r, targetPages: v })));
+                }}
+              />
+            </div>
+            <div className="field grow" style={{ minWidth: 220 }}>
+              <label>输出文件名</label>
+              <input
+                value={outputName}
+                title="保存到第一个源文件所在文件夹，重名自动加 (1) 后缀"
+                onChange={(e) => {
+                  setOutputName(e.target.value);
+                  setOutputDirty(true);
+                }}
+              />
+            </div>
           </div>
-        )}
+        </div>
+      </section>
 
-        <div className="field">
-          <label title="在每个文件的内容页右下角盖页码 1,2,3…（每个文件都从 1 重新开始，分隔页不编号）">
-            页码
-            <input
-              type="checkbox"
-              checked={pageNum}
-              onChange={(e) => setPageNum(e.target.checked)}
-              style={{ marginLeft: 6, verticalAlign: "middle" }}
-            />
-          </label>
-        </div>
-        <div className="field grow">
-          <label title="保存到第一个源文件所在文件夹，重名自动加 (1) 后缀">输出文件名</label>
-          <input
-            value={outputName}
-            title="保存到第一个源文件所在文件夹，重名自动加 (1) 后缀"
-            onChange={(e) => {
-              setOutputName(e.target.value);
-              setOutputDirty(true);
-            }}
-          />
-        </div>
-      </div>
+      {rows.length > 0 && <SequenceBar rows={rows} sepPages={sepPages} />}
 
       {/* 进度 / 结果 */}
       {busy && progress && (
@@ -522,15 +666,20 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
       )}
       {result && (
         <div className="banner ok">
-          ✅ 合成完成：{result.pages} 页 · {(result.sizeBytes / 1024 / 1024).toFixed(1)} MB ·{" "}
-          {(result.elapsedMs / 1000).toFixed(2)}s
-          {openedWith && <> · 已在 {openedWith} 中打开</>}
-          <div className="banner-path">{result.path}</div>
+          <span>合成完成</span>
+          <span style={{ fontWeight: 400 }}>
+            {result.pages} 页 · {(result.sizeBytes / 1024 / 1024).toFixed(1)} MB ·{" "}
+            {(result.elapsedMs / 1000).toFixed(2)}s
+            {openedWith && <> · 已在 {openedWith} 中打开</>}
+          </span>
+          <div className="banner-path">
+            <ExportOutlined /> {result.path}
+          </div>
         </div>
       )}
       {openError && (
         <div className="banner warn">
-          ⚠️ 文件已合成，但自动用 WPS 打开失败：{openError}
+          <span>文件已合成，但自动用 WPS 打开失败：{openError}</span>
           {result && (
             <button className="btn sm banner-btn" onClick={() => openWithWps(result.path)}>
               重试打开
@@ -538,7 +687,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           )}
         </div>
       )}
-      {error && <div className="banner err">❌ {error}</div>}
+      {error && <div className="banner err">{error}</div>}
 
       {/* 预览弹窗 */}
       {previewPages && (

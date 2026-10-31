@@ -146,21 +146,25 @@ export default function ProductLabelPage() {
 
   return (
     <div className="page">
-      <div className="toolbar">
-        <button className="btn primary big" onClick={doExportCsv} disabled={items.length === 0}>
-          📄 导出 CSV（给 gLabels）
-        </button>
-        <span className="muted">
-          共 {total} 张 · CSV 是 UTF-8 无 BOM，gLabels 的 Merge 直接读；版式和打印在 gLabels 里调
-        </span>
-        <span className="spacer" />
-        <HistoryButton />
-      </div>
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">产品标签</h1>
+          <p className="page-sub">录入编码和名称、分配份数，导出 CSV 交给 gLabels 排版打印</p>
+        </div>
+        <div className="page-actions">
+          <HistoryButton />
+          <button className="btn primary big" onClick={doExportCsv} disabled={items.length === 0}>
+            导出 CSV（给 gLabels）
+          </button>
+        </div>
+      </header>
 
-      <div className="form-grid">
-        <div className="boxplan-title">快速解析</div>
-        <div className="field grow">
-          <label>每行一条：英文编码 + 中文名称（中间空格可以有，也可以直接连着写）</label>
+      <section className="card">
+        <div className="card-head">
+          <span className="card-title">快速解析</span>
+          <span className="card-sub">每行一条：英文编码 + 中文名称</span>
+        </div>
+        <div className="card-body">
           <textarea
             className="boxplan-textarea mono"
             value={bulk}
@@ -168,18 +172,20 @@ export default function ProductLabelPage() {
             placeholder={"ZX-WYB-LF 晚宴包绿粉色\nZX-WYB-DALF 晚宴包深绿粉\nZX-WYB-HZ 晚宴包黑棕色"}
             spellCheck={false}
           />
-        </div>
-        <div className="toolbar">
-          <span className="muted">
+          <div className="muted" style={{ marginTop: 8 }}>
             编码读到第一个汉字或空白为止；Excel 两列直接粘（Tab / 逗号）也认；空行自动忽略
-          </span>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="form-grid">
-        <div className="boxplan-title">标签内容</div>
-        <div className="boxplan-table-wrap">
-          <table className="hist-table boxplan-input-table product-label-table">
+      <section className="card">
+        <div className="card-head">
+          <span className="card-title">标签内容</span>
+          <span className="card-sub">共 {total} 张</span>
+        </div>
+        <div className="card-body tight">
+          <div className="boxplan-table-wrap">
+            <table className="hist-table boxplan-input-table product-label-table">
             <thead>
               <tr>
                 <th style={{ width: "40%" }}>编码（条码内容）</th>
@@ -232,22 +238,23 @@ export default function ProductLabelPage() {
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="toolbar" style={{ padding: "10px 4px 2px" }}>
+            <button className="btn" onClick={() => setRows((prev) => [...prev, emptyRow()])}>
+              ＋ 添加一行
+            </button>
+            <span className="muted">编码必填；份数 = 这个标签打几张（CSV 里按份数展开成多行）</span>
+          </div>
         </div>
-        <div className="toolbar">
-          <button className="btn" onClick={() => setRows((prev) => [...prev, emptyRow()])}>
-            ＋ 添加一行
-          </button>
-          <span className="muted">编码必填；份数 = 这个标签打几张（CSV 里按份数展开成多行）</span>
-        </div>
-      </div>
+      </section>
 
       {csvPath && (
         <div className="banner ok">
-          ✅ 已导出 CSV（UTF-8 无 BOM），共 {total} 行
+          <span>已导出 CSV（UTF-8 无 BOM），共 {total} 行</span>
           <div className="banner-path">{csvPath}</div>
         </div>
       )}
-      {error && <div className="banner err">❌ {error}</div>}
+      {error && <div className="banner err">{error}</div>}
     </div>
   );
 }

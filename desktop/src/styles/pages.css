@@ -1,0 +1,270 @@
+/* 箱唛表单卡 / 箱规
+   —— 从 src/App.css 拆出（2026-10-31），顺序与拆分前一致，别在中间插新样式。 */
+
+/* ---------- 箱唛 / 表单卡 ---------- */
+
+.form-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.form-grid .field {
+  flex: 1;
+  min-width: 140px;
+}
+.boxplan-title {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.sku-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.sku-head,
+.sku-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.6fr 0.8fr 1.6fr 44px 40px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.sku-row > *,
+.sku-head > * {
+  min-width: 0;
+}
+.sku-row > input {
+  width: 100%;
+}
+.sku-head {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 2px;
+}
+.sku-row {
+  padding: 6px 2px;
+  border-top: 1px solid #f0f2f4;
+}
+.sku-row .btn {
+  height: 28px;
+  padding: 0;
+}
+.sku-table > .btn {
+  align-self: flex-start;
+  margin-top: 6px;
+  border-style: dashed;
+}
+
+.preview-wrap {
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.preview-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.preview-img {
+  max-width: 420px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 170px;
+  width: 100%;
+  padding: 16px;
+  border: 1px dashed #e1e5ee;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ---------- 箱规 ---------- */
+
+.boxplan-inputs {
+  gap: 16px;
+}
+.boxplan-input-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.boxplan-input-table th {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #f9fafb;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.boxplan-input-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid #f0f2f4;
+  text-align: center;
+  white-space: nowrap;
+}
+.boxplan-input-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.boxplan-input-table tbody tr:hover td {
+  background: #f5f6f7;
+}
+.boxplan-input-table td.mono {
+  color: #46536a;
+  font-variant-numeric: tabular-nums;
+}
+.boxplan-input-table input {
+  width: 100%;
+  min-width: 62px;
+  height: 30px;
+  padding: 0 6px;
+  text-align: center;
+  background: var(--panel-soft);
+  border-radius: 7px;
+}
+.boxplan-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+}
+.stepper input {
+  min-width: 58px;
+  width: 100%;
+}
+.stepper-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+.stepper-btns button {
+  padding: 1px 5px;
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
+  background: #f5f6f7;
+  color: #9aa3b2;
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+.stepper-btns button:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.boxplan-textarea {
+  width: 100%;
+  min-height: 110px;
+  padding: 10px 12px;
+  white-space: pre;
+  line-height: 1.7;
+  font-size: 12.5px;
+  background: var(--panel-soft);
+}
+.boxplan-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.card .boxplan-table-wrap {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.boxplan-simrow td {
+  background: #f5f7fa;
+  border-bottom: 1px solid #e4ebfb;
+  color: #0f1115;
+  font-weight: 600;
+}
+.boxplan-simrow td.mono {
+  color: #0f1115;
+}
+.boxplan-simrow td.boxplan-tag,
+.boxplan-simrow .boxplan-mode-tag {
+  color: var(--primary-dark);
+}
+.boxplan-mode-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--primary);
+}
+.boxplan-inline {
+  width: 100%;
+  user-select: text;
+}
+.boxplan-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.boxplan-table {
+  width: 100%;
+}
+.boxplan-table th:first-child,
+.boxplan-table td:first-child {
+  width: 44px;
+  text-align: center;
+}
+.boxplan-picked td {
+  background: #f5f7fa;
+}
+.boxplan-rec {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: #fff4e0;
+  color: #8a5a0a;
+  font-size: 10.5px;
+  line-height: 17px;
+}
+.boxplan-out-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.boxplan-out {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  user-select: text;
+}

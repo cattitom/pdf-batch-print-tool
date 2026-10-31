@@ -134,98 +134,139 @@ export default function LabelPage() {
 
   return (
     <div className="page">
-      <div className="toolbar">
-        <button className="btn primary big" onClick={doGenerate} disabled={busy}>
-          {busy ? "生成中…" : "🏷 生成箱唛"}
-        </button>
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">箱唛生成</h1>
+          <p className="page-sub">一箱一页，100×100mm 热敏标签，条码 + 二维码 + 中文排版</p>
+        </div>
+        <div className="page-actions">
+          <button className="btn primary big" onClick={doGenerate} disabled={busy}>
+            {busy ? "生成中…" : "生成箱唛"}
+          </button>
+        </div>
+      </header>
 
-      </div>
+      <div className="split">
+        <div className="split-main">
+          <section className="card">
+            <div className="card-head">
+              <span className="card-title">单据信息</span>
+              <span className="card-sub">入库单号必填，其余可留空</span>
+            </div>
+            <div className="card-body">
+              <div className="form-grid flat">
+                <div className="field">
+                  <label>入库单号 *</label>
+                  <input
+                    value={inboundNo}
+                    onChange={(e) => setInboundNo(e.target.value)}
+                    placeholder="如 IN20261020001"
+                  />
+                </div>
+                <div className="field">
+                  <label>客户</label>
+                  <input value={client} onChange={(e) => setClient(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>仓库</label>
+                  <input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>货架号</label>
+                  <input value={shelf} onChange={(e) => setShelf(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          </section>
 
-      <div className="form-grid">
-        <div className="field">
-          <label>入库单号 *</label>
-          <input value={inboundNo} onChange={(e) => setInboundNo(e.target.value)} placeholder="如 IN20261020001" />
+          <section className="card">
+            <div className="card-head">
+              <span className="card-title">SKU 与箱数</span>
+              <span className="card-sub">件数明细不填时按「箱数 × 每箱件数」</span>
+            </div>
+            <div className="card-body">
+              <div className="sku-table flat">
+                <div className="sku-head">
+                  <span>SKU</span>
+                  <span>箱数</span>
+                  <span>每箱件数</span>
+                  <span>件数明细（如 250*6,167*2,166）</span>
+                  <span>New</span>
+                  <span />
+                </div>
+                {skus.map((row, i) => (
+                  <div className="sku-row" key={i}>
+                    <input
+                      value={row.sku}
+                      onChange={(e) => patchRow(i, { sku: e.target.value })}
+                      placeholder="SKU 编码"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={row.boxes}
+                      onChange={(e) => patchRow(i, { boxes: Math.max(1, +e.target.value || 1) })}
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={row.pcsPerBox}
+                      onChange={(e) => patchRow(i, { pcsPerBox: Math.max(1, +e.target.value || 1) })}
+                    />
+                    <input
+                      value={row.quantities}
+                      onChange={(e) => patchRow(i, { quantities: e.target.value })}
+                      placeholder="可选，填了按明细展开"
+                    />
+                    <input
+                      type="checkbox"
+                      checked={row.newFlag}
+                      onChange={(e) => patchRow(i, { newFlag: e.target.checked })}
+                    />
+                    <button
+                      className="btn danger sm"
+                      title="删除这行"
+                      onClick={() =>
+                        setSkus((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev))
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button className="btn" onClick={() => setSkus((prev) => [...prev, emptyRow()])}>
+                  ＋ 添加 SKU
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
-        <div className="field">
-          <label>客户</label>
-          <input value={client} onChange={(e) => setClient(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>仓库</label>
-          <input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>货架号</label>
-          <input value={shelf} onChange={(e) => setShelf(e.target.value)} />
-        </div>
-      </div>
 
-      <div className="sku-table">
-        <div className="sku-head">
-          <span>SKU</span>
-          <span>箱数</span>
-          <span>每箱件数</span>
-          <span>件数明细（如 250*6,167*2,166）</span>
-          <span>New</span>
-          <span></span>
-        </div>
-        {skus.map((row, i) => (
-          <div className="sku-row" key={i}>
-            <input value={row.sku} onChange={(e) => patchRow(i, { sku: e.target.value })} placeholder="SKU 编码" />
-            <input
-              type="number"
-              min={1}
-              value={row.boxes}
-              onChange={(e) => patchRow(i, { boxes: Math.max(1, +e.target.value || 1) })}
-            />
-            <input
-              type="number"
-              min={1}
-              value={row.pcsPerBox}
-              onChange={(e) => patchRow(i, { pcsPerBox: Math.max(1, +e.target.value || 1) })}
-            />
-            <input
-              value={row.quantities}
-              onChange={(e) => patchRow(i, { quantities: e.target.value })}
-              placeholder="可选，填了按明细展开"
-            />
-            <input
-              type="checkbox"
-              checked={row.newFlag}
-              onChange={(e) => patchRow(i, { newFlag: e.target.checked })}
-            />
-            <button
-              className="btn danger"
-              onClick={() => setSkus((prev) => (prev.length > 1 ? prev.filter((_, j) => j !== i) : prev))}
-            >
-              ✕
-            </button>
+        <section className="card split-side">
+          <div className="card-head">
+            <span className="card-title">首页预览</span>
+            <span className="card-sub">{previewLoading ? "生成中…" : "实时"}</span>
           </div>
-        ))}
-        <button className="btn" onClick={() => setSkus((prev) => [...prev, emptyRow()])}>
-          ＋ 添加 SKU
-        </button>
+          <div className="card-body">
+            {preview ? (
+              <img src={preview} alt="箱唛预览" className="preview-img" />
+            ) : (
+              <div className="preview-empty">
+                填好「入库单号」和至少一个 SKU 后，这里会自动显示第一张箱唛
+              </div>
+            )}
+            {previewError && <div className="banner err" style={{ marginTop: 10 }}>{previewError}</div>}
+          </div>
+        </section>
       </div>
 
-      <div className="preview-wrap">
-        <div className="preview-title">
-          首页预览{previewLoading ? " · 生成中…" : ""}
-        </div>
-        {preview ? (
-          <img src={preview} alt="箱唛预览" className="preview-img" />
-        ) : (
-          <div className="preview-empty">
-            填好「入库单号」和至少一个 SKU 后，这里会自动显示第一张箱唛
-          </div>
-        )}
-        {previewError && <div className="banner err">❌ {previewError}</div>}
-      </div>
       {result && (
         <div className="banner ok">
-          ✅ 已生成 {result.boxes} 张箱唛<div className="banner-path">{result.path}</div>
+          <span>已生成 {result.boxes} 张箱唛</span>
+          <div className="banner-path">{result.path}</div>
         </div>
       )}
-      {error && <div className="banner err">❌ {error}</div>}
+      {error && <div className="banner err">{error}</div>}
     </div>
   );
 }
