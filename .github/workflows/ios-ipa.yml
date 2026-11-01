@@ -103,13 +103,14 @@ jobs:
             build > /tmp/xcodebuild.log 2>&1
           RC=$?
           set -e
-          grep -E "error:|\*\* BUILD" /tmp/xcodebuild.log | tail -40 || true
-          if [ $RC -ne 0 ]; then
-            echo "::error::xcodebuild 失败（exit $RC），日志前 40 行："
-            head -40 /tmp/xcodebuild.log
-            echo "::error::……日志尾部："
+          echo "xcodebuild exit=${RC}, log lines=$(wc -l < /tmp/xcodebuild.log)"
+          grep -Ei "error" /tmp/xcodebuild.log | tail -40 || true
+          if [ "${RC}" -ne 0 ]; then
+            echo "----- log head (60) -----"
+            head -60 /tmp/xcodebuild.log
+            echo "----- log tail (120) -----"
             tail -120 /tmp/xcodebuild.log
-            exit $RC
+            exit "${RC}"
           fi
           echo "--- 找得到的 .app ---"
           find . -name "*.app" -type d | head -20
@@ -130,6 +131,14 @@ jobs:
                   print('APP_PATH=' + os.path.join(bs.get('TARGET_BUILD_DIR', ''), name))
                   break
           PY
+
+      - name: 上传编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          if-no-files-found: ignore
 
       - name: 组装未签名 IPA
         run: |
