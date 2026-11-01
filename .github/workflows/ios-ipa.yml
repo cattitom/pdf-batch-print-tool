@@ -61,7 +61,8 @@ jobs:
                  '\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n'
                  '\t\t\t\tCODE_SIGN_IDENTITY = "";\n'
                  '\t\t\t\tCODE_SIGN_STYLE = Manual;\n'
-                 '\t\t\t\tDEVELOPMENT_TEAM = "";\n')
+                 '\t\t\t\tDEVELOPMENT_TEAM = "";\n'
+                 '\t\t\t\tENABLE_USER_SCRIPT_SANDBOXING = NO;\n')
           n = s.count('buildSettings = {')
           out = s.replace('buildSettings = {', 'buildSettings = {\n' + ins)
           open(p, 'w').write(out)
@@ -127,12 +128,9 @@ jobs:
           set +e
           # 不能直接 xcodebuild：Build Rust Code 相位要读 gen/apple/.tauri/cli-options-server.json，
           # 那个文件只有 tauri ios build / tauri ios dev 在跑的时候才会写。
-          tauri ios build --debug --ci --target aarch64 -- \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY='' \
-            ENABLE_USER_SCRIPT_SANDBOXING=NO \
-            > /tmp/xcodebuild.log 2>&1
+          # 别给 `--` 传 KEY=VALUE：那些参数会原样塞进 cargo build，直接报 unexpected argument。
+          # 签名和脚本沙箱都在工程里关掉了（见上面的 pbxproj 补丁）。
+          tauri ios build --debug --ci --target aarch64 > /tmp/xcodebuild.log 2>&1
           RC=$?
           set -e
           echo "tauri ios build exit=${RC}, log lines=$(wc -l < /tmp/xcodebuild.log)"
@@ -145,7 +143,8 @@ jobs:
             exit "${RC}"
           fi
           echo "--- 找得到的 .app ---"
-          find . -name "*.app" -type d -not -path "*/Pods/*" | head -20
+          find . "$HOME/Library/Developer/Xcode/DerivedData" -name "*.app" -type d \
+            -not -path "*/Pods/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -20
 
       - name: 上传编译日志
         if: always()
@@ -158,15 +157,13 @@ jobs:
       - name: 组装未签名 IPA
         run: |
           set -uo pipefail
-          APP="${APP_PATH:-}"
-          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
-            APP=$(find ios-shell -name "*.app" -type d -not -path "*/Pods/*" | head -1)
-          fi
+          APP=$(find ios-shell "$HOME/Library/Developer/Xcode/DerivedData" -name "*.app" -type d \
+                  -not -path "*/Pods/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
           echo "app=$APP"
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "::error::没找到 .app，打印线索："
-            ls -la ios-shell/src-tauri/gen/apple/build/Build/Products 2>/dev/null || echo "(无 Products 目录)"
-            find ios-shell/src-tauri/gen/apple -maxdepth 4 -type d | head -60
+            find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 4 -name "*.app" 2>/dev/null | head -20
+            ls -la "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null | head -10
             exit 1
           fi
           rm -rf Payload && mkdir -p Payload
