@@ -39,6 +39,15 @@ jobs:
         working-directory: ios-shell/src-tauri
         run: tauri ios init --ci
 
+      - name: 打印 iOS 工程（排查用）
+        run: |
+          ls -la ios-shell/src-tauri/gen/apple | head -40
+          echo '--- project.yml ---'
+          sed -n '1,220p' ios-shell/src-tauri/gen/apple/project.yml 2>/dev/null || echo '(没有 project.yml)'
+          echo '--- which tauri ---'
+          which tauri || true
+          node -v || true
+
       - name: 允许局域网明文（ATS）
         run: |
           PLIST=$(find ios-shell/src-tauri/gen/apple -name "Info.plist" | head -1)
