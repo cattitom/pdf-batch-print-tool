@@ -81,6 +81,7 @@ jobs:
       - name: 编译（不签名）
         working-directory: ios-shell/src-tauri/gen/apple
         run: |
+          set -uo pipefail
           SCHEME=$(python3 -c "import json;d=json.load(open('/tmp/list.json'));print(d['workspace']['schemes'][0])")
           echo "scheme=$SCHEME"
           xcodebuild \
@@ -94,13 +95,49 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
             ARCHS=arm64 \
-            build
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            build > /tmp/xcodebuild.log 2>&1
+          RC=$?
+          grep -E "error:|\*\* BUILD" /tmp/xcodebuild.log | tail -40 || true
+          if [ $RC -ne 0 ]; then
+            echo "::error::xcodebuild 失败（exit $RC），日志尾部："
+            tail -120 /tmp/xcodebuild.log
+            exit $RC
+          fi
+          echo "--- 找得到的 .app ---"
+          find . -name "*.app" -type d | head -20
+          # 工程 xcconfig 可能覆盖 SYMROOT，直接问 xcodebuild 要真实产物路径
+          xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration debug -sdk iphoneos \
+            -derivedDataPath build -showBuildSettings -json > /tmp/settings.json 2>/dev/null || true
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json, os
+          try:
+              d = json.load(open('/tmp/settings.json'))
+          except Exception as e:
+              print('# showBuildSettings 解析失败: %s' % e)
+              raise SystemExit(0)
+          for item in (d if isinstance(d, list) else [d]):
+              bs = item.get('buildSettings', {})
+              name = bs.get('FULL_PRODUCT_NAME', '')
+              if name.endswith('.app'):
+                  print('APP_PATH=' + os.path.join(bs.get('TARGET_BUILD_DIR', ''), name))
+                  break
+          PY
 
       - name: 组装未签名 IPA
         run: |
-          APP=$(find ios-shell/src-tauri/gen/apple/build -name "*.app" -type d | head -1)
+          set -uo pipefail
+          APP="${APP_PATH:-}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            APP=$(find ios-shell -name "*.app" -type d -not -path "*/Pods/*" | head -1)
+          fi
           echo "app=$APP"
-          test -n "$APP"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "::error::没找到 .app，打印线索："
+            ls -la ios-shell/src-tauri/gen/apple/build/Build/Products 2>/dev/null || echo "(无 Products 目录)"
+            find ios-shell/src-tauri/gen/apple -maxdepth 4 -type d | head -60
+            exit 1
+          fi
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
           zip -qry shipping-shell-unsigned.ipa Payload
