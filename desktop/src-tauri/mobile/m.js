@@ -226,7 +226,40 @@
     });
   }
 
+  // 搜索时直接出「行级」结果：输入入库号 / 单号 / 商品都能看到具体是哪些货
+  function renderSearch() {
+    var hits = rows.filter(function (r) {
+      return (r.name + " " + r.inbound + " " + r.waybill + " " + r.customer)
+        .toLowerCase()
+        .indexOf(q) >= 0;
+    });
+    if (!hits.length) {
+      $tickets.innerHTML =
+        '<div class="empty">没有匹配的货<br/>换个单号 / 入库号 / 商品名试试</div>';
+      return;
+    }
+    $tickets.innerHTML =
+      '<div class="hits">找到 ' + hits.length + ' 行</div>' +
+      hits
+        .map(function (r) {
+          return (
+            '<div class="hit" data-w="' +
+            esc(r.waybill || "未识别单号") +
+            '"><div class="hit-w mono">' +
+            esc(r.waybill || "未识别单号") +
+            "</div>" +
+            lineHtml(r) +
+            "</div>"
+          );
+        })
+        .join("");
+  }
+
   function renderTickets() {
+    if (q) {
+      renderSearch();
+      return;
+    }
     var list = tickets().filter(matchTicket);
     if (!list.length) {
       $tickets.innerHTML =
@@ -521,6 +554,23 @@
     if (claimBtn) {
       e.stopPropagation();
       claimTask(claimBtn.getAttribute("data-claim"));
+      return;
+    }
+    // 搜索结果里：点勾直接标已出，点别处进这张单
+    var tick = e.target.closest(".hit .tick");
+    if (tick) {
+      e.stopPropagation();
+      var rowEl = tick.closest(".row");
+      if (rowEl && rowEl.classList.contains("blocked")) {
+        toast("没有入库号也没有单号，不能出货");
+        return;
+      }
+      if (rowEl) toggle(rowEl.getAttribute("data-k"));
+      return;
+    }
+    var hit = e.target.closest(".hit");
+    if (hit) {
+      showDoc(hit.getAttribute("data-w"));
       return;
     }
     var card = e.target.closest(".ticket");
