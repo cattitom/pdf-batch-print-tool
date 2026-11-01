@@ -1,0 +1,90 @@
+name: iOS 出货助手 IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ios-shell/**"
+      - ".github/workflows/ios-ipa.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node（装 tauri CLI 用）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 Tauri CLI
+        run: npm i -g "@tauri-apps/cli@^2"
+
+      - name: Rust + iOS target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: 缓存 cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "ios-shell/src-tauri -> target"
+
+      - name: 生成 iOS 工程
+        working-directory: ios-shell/src-tauri
+        run: tauri ios init --ci
+
+      - name: 允许局域网明文（ATS）
+        run: |
+          PLIST=$(find ios-shell/src-tauri/gen/apple -name "Info.plist" | head -1)
+          echo "Info.plist: $PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
+
+      - name: 列出 Xcode 工程 / scheme
+        working-directory: ios-shell/src-tauri/gen/apple
+        run: |
+          ls -la
+          WS=$(ls -d *.xcworkspace | head -1)
+          echo "workspace=$WS"
+          echo "WS=$WS" >> "$GITHUB_ENV"
+          xcodebuild -list -workspace "$WS" -json | tee /tmp/list.json
+
+      - name: 编译（不签名）
+        working-directory: ios-shell/src-tauri/gen/apple
+        run: |
+          SCHEME=$(python3 -c "import json;d=json.load(open('/tmp/list.json'));print(d['workspace']['schemes'][0])")
+          echo "scheme=$SCHEME"
+          xcodebuild \
+            -workspace "$WS" \
+            -scheme "$SCHEME" \
+            -configuration debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            ARCHS=arm64 \
+            build
+
+      - name: 组装未签名 IPA
+        run: |
+          APP=$(find ios-shell/src-tauri/gen/apple/build -name "*.app" -type d | head -1)
+          echo "app=$APP"
+          test -n "$APP"
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry shipping-shell-unsigned.ipa Payload
+          ls -lh shipping-shell-unsigned.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: shipping-shell-ipa
+          path: shipping-shell-unsigned.ipa
+          if-no-files-found: error
