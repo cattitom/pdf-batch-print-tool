@@ -45,10 +45,15 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
 
-      - name: 列出 Xcode 工程 / scheme
+      - name: pod install（生成 xcworkspace）
         working-directory: ios-shell/src-tauri/gen/apple
         run: |
           ls -la
+          pod install
+
+      - name: 列出 Xcode 工程 / scheme
+        working-directory: ios-shell/src-tauri/gen/apple
+        run: |
           WS=$(ls -d *.xcworkspace | head -1)
           echo "workspace=$WS"
           echo "WS=$WS" >> "$GITHUB_ENV"
