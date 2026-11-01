@@ -82,7 +82,9 @@ jobs:
         working-directory: ios-shell/src-tauri/gen/apple
         run: |
           set -uo pipefail
-          SCHEME=$(python3 -c "import json;d=json.load(open('/tmp/list.json'));print(d['workspace']['schemes'][0])")
+          python3 -c "import json;print('schemes=', ' '.join(json.load(open('/tmp/list.json'))['workspace']['schemes']))"
+          # schemes[0] 往往是 'Pods-xxx' 聚合 scheme，编它不会产出 .app；要挑真正的 app scheme
+          SCHEME=$(python3 -c "import json;s=json.load(open('/tmp/list.json'))['workspace']['schemes'];print(next((x for x in s if not x.startswith('Pods-')), s[0]))")
           echo "scheme=$SCHEME"
           xcodebuild \
             -workspace "$WS" \
