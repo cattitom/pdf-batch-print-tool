@@ -42,9 +42,16 @@ fn discover_blocking() -> Result<Peer, String> {
 
     let target: std::net::SocketAddr = ([255, 255, 255, 255], DISCOVER_PORT).into();
     let mut buf = [0u8; 1024];
+    let mut sent = 0usize;
+    let mut last_send_err: Option<String> = None;
     for _ in 0..ROUNDS {
-        // 广播可能丢包，每轮重发一次
-        let _ = sock.send_to(DISCOVER_MAGIC, target);
+        // 广播可能丢包，每轮重发一次。
+        // 发不出去必须记下来：iOS 没给「本地网络」权限时 send_to 会直接报错，
+        // 以前用 let _ = 吞掉了，界面只能显示含糊的「没找到电脑」。
+        match sock.send_to(DISCOVER_MAGIC, target) {
+            Ok(_) => sent += 1,
+            Err(e) => last_send_err = Some(e.to_string()),
+        }
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
                 let text = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -65,7 +72,15 @@ fn discover_blocking() -> Result<Peer, String> {
             Err(_) => continue,
         }
     }
-    Err("没找到电脑".to_string())
+    if sent == 0 {
+        return Err(format!(
+            "广播发不出去：{}。iOS 上多半是「本地网络」权限被拒，去 设置 → 出货助手 → 本地网络 打开后重试",
+            last_send_err.unwrap_or_else(|| "未知错误".into())
+        ));
+    }
+    Err(format!(
+        "没找到电脑（广播了 {sent} 次，电脑没应答；确认手机和电脑同一个 WiFi）"
+    ))
 }
 
 #[tauri::command]

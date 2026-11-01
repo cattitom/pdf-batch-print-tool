@@ -36,7 +36,7 @@
   }
   @keyframes turn { to { transform: rotate(360deg); } }
   .title { font-size: 17px; font-weight: 600; letter-spacing: .3px; }
-  .sub { color: var(--dim); font-size: 13px; max-width: 300px; }
+  .sub { color: var(--dim); font-size: 13px; max-width: 300px; overflow-wrap: anywhere; }
   .icon-bad {
     width: 40px; height: 40px; border-radius: 50%;
     background: rgba(255,107,107,.14); color: var(--danger);
@@ -96,8 +96,9 @@
     retry.classList.remove('hide');
     hint.classList.remove('hide');
     title.textContent = '没找到电脑';
-    sub.textContent = '检查是否同一 WiFi 后，点下面重试';
-    if (msg && msg !== '没找到电脑') console.warn('[discover]', msg);
+    // 把原生层返回的真实原因摆到界面上（权限被拒 / 广播发不出 / 没人应答），别只打 console
+    var detail = msg ? String(msg) : '';
+    sub.textContent = detail && detail !== '没找到电脑' ? detail : '检查是否同一 WiFi 后，点下面重试';
   }
 
   function connect() {
