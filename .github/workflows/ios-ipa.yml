@@ -18,7 +18,7 @@ jobs:
           node-version: 22
 
       - name: 安装 Tauri CLI
-        run: npm i -g "@tauri-apps/cli@^2"
+        run: npm i -g "@tauri-apps/cli@^2.12.4"
 
       - name: Rust + iOS target
         uses: dtolnay/rust-toolchain@stable
@@ -127,7 +127,9 @@ jobs:
           # 那个文件只有 tauri ios build / tauri ios dev 在跑的时候才会写。
           # 别给 `--` 传 KEY=VALUE：那些参数会原样塞进 cargo build，直接报 unexpected argument。
           # 签名和脚本沙箱都在工程里关掉了（见上面的 pbxproj 补丁）。
-          tauri ios build --debug --ci --target aarch64 > /tmp/xcodebuild.log 2>&1
+          # --no-sign：归档后不跑 xcodebuild -exportArchive（CI 没有团队 ID，那步必然报
+          #   "teamID" should be non-empty），改由 CLI 把归档里的 .app 塞进 Payload 打成未签名 .ipa。
+          tauri ios build --debug --ci --target aarch64 --no-sign > /tmp/xcodebuild.log 2>&1
           RC=$?
           set -e
           echo "tauri ios build exit=${RC}, log lines=$(wc -l < /tmp/xcodebuild.log)"
@@ -139,9 +141,10 @@ jobs:
             tail -150 /tmp/xcodebuild.log
             exit "${RC}"
           fi
-          echo "--- 找得到的 .app ---"
-          find . "$HOME/Library/Developer/Xcode/DerivedData" -name "*.app" -type d \
-            -not -path "*/Pods/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -20
+          echo "--- 找得到的 .ipa / .app ---"
+          find "$HOME/Library/Developer/Xcode/DerivedData" -name "*.app" -type d \
+            -not -path "*/Pods/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -10
+          find gen/apple/build -name "*.ipa" -type f 2>/dev/null | head -10
 
       - name: 上传编译日志
         if: always()
@@ -151,9 +154,18 @@ jobs:
           path: /tmp/xcodebuild.log
           if-no-files-found: ignore
 
-      - name: 组装未签名 IPA
+      - name: 收集未签名 IPA
         run: |
           set -uo pipefail
+          # --no-sign 会直接用归档里的 .app 打 Payload/App.ipa，优先用它
+          IPA=$(find ios-shell/src-tauri/gen/apple/build -name "*.ipa" -type f 2>/dev/null | head -1)
+          if [ -n "$IPA" ]; then
+            echo "ipa=$IPA"
+            cp "$IPA" shipping-shell-unsigned.ipa
+            ls -lh shipping-shell-unsigned.ipa
+            exit 0
+          fi
+          echo "没找到 CLI 产出的 IPA，退回从 .app 手工打包"
           APP=$(find ios-shell "$HOME/Library/Developer/Xcode/DerivedData" -name "*.app" -type d \
                   -not -path "*/Pods/*" -not -path "*/Index.noindex/*" 2>/dev/null | head -1)
           echo "app=$APP"
