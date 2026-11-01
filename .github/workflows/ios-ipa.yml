@@ -52,6 +52,21 @@ jobs:
           chmod +x ios-shell/src-tauri/gen/apple/tauri
           node ios-shell/src-tauri/gen/apple/tauri --version
 
+      - name: 关掉签名（CI 没有开发团队，xcodebuild 会直接报 requires a development team）
+        run: |
+          python3 - <<'PY'
+          p = 'ios-shell/src-tauri/gen/apple/shipping-shell.xcodeproj/project.pbxproj'
+          s = open(p).read()
+          ins = ('\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n'
+                 '\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n'
+                 '\t\t\t\tCODE_SIGN_IDENTITY = "";\n'
+                 '\t\t\t\tCODE_SIGN_STYLE = Manual;\n'
+                 '\t\t\t\tDEVELOPMENT_TEAM = "";\n')
+          n = s.count('buildSettings = {')
+          out = s.replace('buildSettings = {', 'buildSettings = {\n' + ins)
+          open(p, 'w').write(out)
+          print('patched buildSettings blocks:', n)
+          PY
       - name: tauri ios 帮助（排查用）
         run: |
           tauri ios --help || true
