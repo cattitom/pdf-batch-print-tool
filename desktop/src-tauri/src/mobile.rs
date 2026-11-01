@@ -6,7 +6,7 @@
 //! - token 放在 URL 查询参数里，二维码直接带 token，局域网内不裸奔。
 
 use std::{
-    net::IpAddr,
+    net::{IpAddr, UdpSocket},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -18,6 +18,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+
+/// 手机 App 自动发现用的 UDP 端口（TCP 是 17650-17652）。
+pub const DISCOVER_PORT: u16 = 17655;
+/// App 广播的固定暗号，收到别的 UDP 包一律不理。
+const DISCOVER_MAGIC: &[u8] = b"PDF-MOBILE-DISCOVER";
 
 const PAGE: &str = include_str!("../mobile/index.html");
 const CSS: &str = include_str!("../mobile/m.css");
@@ -207,6 +212,47 @@ fn bind_server(prefer: Option<u16>) -> Result<(Server, u16), String> {
     Ok((server, port))
 }
 
+/// UDP 发现应答：手机 App 一启动就广播暗号，这里回 {port, token}，
+/// 手机就不用扫码/填地址了。socket 绑定失败（端口被占）只是少一个便利，不影响 HTTP 服务。
+fn start_discovery(shared: &MobileShared, stop: Arc<AtomicBool>) {
+    let sock = match UdpSocket::bind(("0.0.0.0", DISCOVER_PORT)) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("UDP 发现端口 {DISCOVER_PORT} 绑定失败：{e}，App 自动发现不可用");
+            return;
+        }
+    };
+    // 收包用超时轮询，好让 stop 生效；不设超时会卡在 recv_from 上退不出去
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(300)));
+    let _ = sock.set_broadcast(true);
+
+    let shared = shared.clone();
+    thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        while !stop.load(Ordering::Relaxed) {
+            let (n, from) = match sock.recv_from(&mut buf) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if &buf[..n] != DISCOVER_MAGIC {
+                continue;
+            }
+            // 口令/端口每次现取：重开服务换了端口也能立刻回报
+            let info = shared.inner.lock().ok().and_then(|i| i.info.clone());
+            if let Some(info) = info {
+                let payload = json!({
+                    "app": "pdf-mobile",
+                    "port": info.port,
+                    "token": info.token,
+                    "urls": info.urls,
+                })
+                .to_string();
+                let _ = sock.send_to(payload.as_bytes(), from);
+            }
+        }
+    });
+}
+
 fn qr_svg(url: &str) -> String {
     match qrcode::QrCode::new(url.as_bytes()) {
         Ok(code) => code
@@ -240,6 +286,8 @@ pub fn start(
     let stop = Arc::new(AtomicBool::new(false));
     inner.stop = Some(stop.clone());
     inner.info = Some(info.clone());
+
+    start_discovery(shared, stop.clone());
 
     let shared_for_thread = shared.clone();
     thread::spawn(move || {
@@ -620,6 +668,35 @@ mod tests {
         assert!(!rows(&shared)[0].checked);
         // 取消（改回未出）不受影响
         assert!(toggle(&shared, "", "", "没有箱唛", false));
+    }
+
+    #[test]
+    fn discovery_answers_broadcast() {
+        // 端口 17655 被真机占着就跳过（开发机常常同时开着 App）
+        let shared = new_shared();
+        let info = match start(&shared, Vec::new(), "dtoken".into(), None) {
+            Ok(i) => i,
+            Err(_) => return,
+        };
+        let sock = std::net::UdpSocket::bind(("127.0.0.1", 0)).expect("bind client");
+        sock.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("timeout");
+        sock.send_to(DISCOVER_MAGIC, ("127.0.0.1", DISCOVER_PORT))
+            .expect("send");
+        let mut buf = [0u8; 512];
+        match sock.recv_from(&mut buf) {
+            Ok((n, _)) => {
+                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                assert!(text.contains("\"port\""), "应答缺 port：{text}");
+                // 开发机上真机可能同时在跑、抢着回包，那不是我们的口令就跳过
+                if text.contains("dtoken") {
+                    assert!(text.contains(&info.port.to_string()), "端口对不上：{text}");
+                }
+            }
+            // 超时：17655 被真机占着，跳过
+            Err(_) => {}
+        }
+        stop(&shared);
     }
 
     fn http(host: &str, req: &str) -> String {

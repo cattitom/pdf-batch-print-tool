@@ -68,12 +68,6 @@ jobs:
           open(p, 'w').write(out)
           print('patched buildSettings blocks:', n)
           PY
-      - name: tauri ios 帮助（排查用）
-        run: |
-          tauri ios --help || true
-          echo '===== build ====='
-          tauri ios build --help || true
-
       - name: 打印 iOS 工程（排查用）
         run: |
           ls -la ios-shell/src-tauri/gen/apple | head -40
@@ -90,6 +84,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
+          # iOS 14+ 往局域网广播要这条说明，否则 UDP 发现会被静默拦掉
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 在局域网里找到电脑上的出货服务" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -40 || true
 
       - name: pod install（生成 xcworkspace）
         working-directory: ios-shell/src-tauri/gen/apple

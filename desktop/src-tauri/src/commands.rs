@@ -1070,7 +1070,8 @@ pub fn mobile_allow_firewall() -> Result<String, ApiError> {
         "@echo off",
         "netsh advfirewall firewall delete rule name=\"PdfMobileReceive\" >nul 2>&1",
         "netsh advfirewall firewall delete rule name=\"PdfMobileReceipt\" >nul 2>&1",
-        "netsh advfirewall firewall add rule name=\"PdfMobileReceive\" dir=in action=allow protocol=TCP localport=17650-17652 >nul",
+        // any：TCP 17650-17652 给网页，UDP 17655 给 App 自动发现
+        "netsh advfirewall firewall add rule name=\"PdfMobileReceive\" dir=in action=allow protocol=any localport=17650-17655 >nul",
         "exit /b %errorlevel%",
     ]
     .join("\r\n");
@@ -1116,7 +1117,7 @@ pub fn mobile_allow_firewall() -> Result<String, ApiError> {
         .unwrap_or(false);
 
     if verified {
-        Ok("已放行 17650-17652（专用/公用网络都放行）。手机重新扫码试试".to_string())
+        Ok("已放行 17650-17655（TCP 网页 + UDP 自动发现，专用/公用网络都放行）。手机重新连一下试试".to_string())
     } else if ok {
         Err(ApiError::new("firewall", "命令执行了，但查不到规则，防火墙可能被组策略接管"))
     } else {
