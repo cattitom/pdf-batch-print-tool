@@ -52,6 +52,12 @@ jobs:
           chmod +x ios-shell/src-tauri/gen/apple/tauri
           node ios-shell/src-tauri/gen/apple/tauri --version
 
+      - name: tauri ios 帮助（排查用）
+        run: |
+          tauri ios --help || true
+          echo '===== build ====='
+          tauri ios build --help || true
+
       - name: 打印 iOS 工程（排查用）
         run: |
           ls -la ios-shell/src-tauri/gen/apple | head -40
