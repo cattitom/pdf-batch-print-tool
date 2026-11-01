@@ -6,7 +6,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 自带 Xcode 15，打不开 Tauri 生成的新格式工程（objectVersion 77）
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +29,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "ios-shell/src-tauri -> target"
+
+      - name: Xcode 版本（排查用）
+        run: |
+          xcodebuild -version
+          ls /Applications | grep -i xcode || true
 
       - name: 生成 iOS 工程
         working-directory: ios-shell/src-tauri
