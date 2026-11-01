@@ -18,3 +18,4 @@ tauri = { version = "2", features = [] }
 # 只为了解 UDP 发现应答里的 {port, token}
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+if-addrs = "0.15.0"

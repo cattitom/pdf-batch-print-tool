@@ -15,6 +15,43 @@ const DISCOVER_MAGIC: &[u8] = b"PDF-MOBILE-DISCOVER";
 const ROUNDS: usize = 6;
 const WAIT: Duration = Duration::from_millis(500);
 
+/// 手机常常同时开着蜂窝和 Wi-Fi：iOS 上直接往 255.255.255.255 发，经常因为找不到路由
+/// 直接报 `No route to host (os error 65)`。所以按每张网卡算出子网定向广播
+/// （比如 192.168.6.255）一起发，比只发受限广播靠谱得多。
+fn broadcast_targets() -> Vec<std::net::SocketAddr> {
+    let mut targets: Vec<std::net::SocketAddr> =
+        vec![([255, 255, 255, 255], DISCOVER_PORT).into()];
+
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        for itf in ifaces {
+            // 回环、蜂窝（pdp_ip*）上没有局域网广播
+            if itf.is_loopback() || itf.name.starts_with("pdp_ip") {
+                continue;
+            }
+            if let if_addrs::IfAddr::V4(v4) = itf.addr {
+                let bcast = match v4.broadcast {
+                    Some(b) => b,
+                    None => {
+                        let mask = u32::from(v4.netmask);
+                        if mask == 0 {
+                            continue;
+                        }
+                        std::net::Ipv4Addr::from(u32::from(v4.ip) | !mask)
+                    }
+                };
+                if bcast == v4.ip || bcast.is_broadcast() {
+                    continue;
+                }
+                let addr = std::net::SocketAddr::from((bcast, DISCOVER_PORT));
+                if !targets.contains(&addr) {
+                    targets.push(addr);
+                }
+            }
+        }
+    }
+    targets
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Peer {
@@ -40,17 +77,19 @@ fn discover_blocking() -> Result<Peer, String> {
     sock.set_read_timeout(Some(WAIT))
         .map_err(|e| format!("设超时失败：{e}"))?;
 
-    let target: std::net::SocketAddr = ([255, 255, 255, 255], DISCOVER_PORT).into();
+    let targets = broadcast_targets();
     let mut buf = [0u8; 1024];
     let mut sent = 0usize;
     let mut last_send_err: Option<String> = None;
     for _ in 0..ROUNDS {
         // 广播可能丢包，每轮重发一次。
-        // 发不出去必须记下来：iOS 没给「本地网络」权限时 send_to 会直接报错，
-        // 以前用 let _ = 吞掉了，界面只能显示含糊的「没找到电脑」。
-        match sock.send_to(DISCOVER_MAGIC, target) {
-            Ok(_) => sent += 1,
-            Err(e) => last_send_err = Some(e.to_string()),
+        // 发不出去必须记下来：iOS 没给「本地网络」权限、或者受限广播没路由时，
+        // send_to 会直接报错，以前用 let _ = 吞掉了，界面只能显示含糊的「没找到电脑」。
+        for target in &targets {
+            match sock.send_to(DISCOVER_MAGIC, target) {
+                Ok(_) => sent += 1,
+                Err(e) => last_send_err = Some(format!("{target}: {e}")),
+            }
         }
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
@@ -74,7 +113,8 @@ fn discover_blocking() -> Result<Peer, String> {
     }
     if sent == 0 {
         return Err(format!(
-            "广播发不出去：{}。iOS 上多半是「本地网络」权限被拒，去 设置 → 出货助手 → 本地网络 打开后重试",
+            "广播发不出去（试了 {} 个地址）：{}。iOS 上多半是「本地网络」权限被拒，去 设置 → 出货助手 → 本地网络 打开后重试",
+            targets.len(),
             last_send_err.unwrap_or_else(|| "未知错误".into())
         ));
     }
