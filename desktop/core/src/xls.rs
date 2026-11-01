@@ -1,14 +1,15 @@
 //! .xls（BIFF8 / OLE2 复合文档）读取：WPS 云表格只导出这个格式，而解析器只吃 xlsx。
 //!
-//! 只解「值 + 合并单元格」两样——出货清单要的就是这两样：公式直接用 FORMULA 记录里
-//! 缓存的结果（不重算），字体样式 / 日期格式 / 图表一律不管。
+//! 解「值 + 合并单元格 + 字体颜色」三样：出货清单要的前两样，公式直接用 FORMULA 记录里
+//! 缓存的结果（不重算）；字体颜色只取到「是不是红的」这一层——云表格里红色字体表示
+//! 已出货，程序照抄原表的判断，不再让人手点。日期格式 / 边框 / 图表仍然不管。
 //!
 //! 不依赖任何 crate：拉不到 calamine 的场景（离线构建）也得能用，而且只想为一个
 //! 格式多背一份依赖不划算。
 //!
 //! 结构：CFB 复合文档 → `Workbook` 流 → BIFF8 记录 → 二维表。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// 扇区号 >= 这个值都表示「链结束 / 特殊标记」。
 const END: u32 = 0xFFFF_FFFA;
@@ -25,6 +26,9 @@ const REC_NUMBER: u16 = 0x0203;
 const REC_BOOLERR: u16 = 0x0205;
 const REC_RK: u16 = 0x027E;
 const REC_CONTINUE: u16 = 0x003C;
+const REC_FONT: u16 = 0x0031;
+const REC_XF: u16 = 0x00E0;
+const REC_PALETTE: u16 = 0x0092;
 
 // ---------- 小工具 ----------
 
@@ -84,6 +88,23 @@ fn rk_value(rk: u32) -> f64 {
         v /= 100.0;
     }
     v
+}
+
+/// BIFF8 内置调色板（索引 0..=63），用来把字体颜色索引翻成 RGB。
+///
+/// 索引 >= 64 是「系统色」，原表里基本不会用；真遇到就当成说不清的颜色。
+fn builtin_rgb(idx: u16) -> Option<(u8, u8, u8)> {
+    const P: [(u8, u8, u8); 64] = [
+    (0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255),
+    (0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255),
+    (128, 0, 0), (0, 128, 0), (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128), (192, 192, 192), (128, 128, 128),
+    (153, 153, 255), (153, 51, 102), (255, 255, 204), (204, 255, 255), (102, 0, 102), (255, 128, 128), (0, 102, 204), (204, 204, 255),
+    (0, 0, 128), (255, 0, 255), (255, 255, 0), (0, 255, 255), (128, 0, 128), (128, 0, 0), (0, 128, 128), (0, 0, 255),
+    (0, 204, 255), (204, 255, 255), (204, 255, 204), (255, 255, 153), (153, 204, 255), (255, 153, 204), (204, 153, 255), (255, 204, 153),
+    (51, 102, 255), (51, 204, 204), (153, 204, 0), (255, 204, 0), (255, 153, 0), (255, 102, 0), (102, 102, 153), (150, 150, 150),
+    (0, 51, 102), (51, 153, 102), (0, 51, 0), (51, 51, 0), (153, 51, 0), (153, 51, 102), (51, 51, 153), (51, 51, 51),
+    ];
+    P.get(idx as usize).copied()
 }
 
 // ---------- CFB（OLE2 复合文档） ----------
@@ -441,6 +462,8 @@ fn collect_records(data: &[u8]) -> Vec<(u16, Vec<u8>)> {
 pub struct Sheet {
     pub name: String,
     pub rows: Vec<Vec<String>>,
+    /// 与 `rows` 同形状：该格字体是不是红色（原表里红色 = 已出货）。
+    pub red: Vec<Vec<bool>>,
 }
 
 impl Sheet {
@@ -475,6 +498,12 @@ pub struct Book {
     wb: Vec<u8>,
     names: Vec<(u32, String)>,
     sst: Vec<String>,
+    /// 每个 XF 记录的字体索引（单元格记录里第 3 个 u16 就是 XF 索引）。
+    xfs: Vec<u16>,
+    /// 每个 FONT 记录的颜色，值是调色板索引。
+    fonts: Vec<u16>,
+    /// PALETTE 记录里的自定义颜色，覆盖内置调色板的 8..=63。
+    palette: HashMap<u8, (u8, u8, u8)>,
 }
 
 impl Book {
@@ -499,10 +528,42 @@ impl Book {
             }
         }
 
+        // 样式链：单元格 → XF → FONT → 调色板索引。只为了判「字体是不是红的」。
+        let mut fonts: Vec<u16> = Vec::new();
+        let mut xfs: Vec<u16> = Vec::new();
+        let mut palette: HashMap<u8, (u8, u8, u8)> = HashMap::new();
+        for (rid, body) in &recs {
+            match *rid {
+                REC_FONT => {
+                    if body.len() >= 6 {
+                        fonts.push(rd_u16(body, 4).unwrap_or(0));
+                    }
+                }
+                REC_XF => {
+                    if body.len() >= 2 {
+                        xfs.push(rd_u16(body, 0).unwrap_or(0));
+                    }
+                }
+                REC_PALETTE => {
+                    let n = rd_u16(body, 0).unwrap_or(0) as usize;
+                    for k in 0..n {
+                        let p = 2 + k * 4;
+                        if p + 2 < body.len() {
+                            palette.insert((8 + k) as u8, (body[p], body[p + 1], body[p + 2]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
         Ok(Book {
             wb,
             names,
             sst,
+            xfs,
+            fonts,
+            palette,
         })
     }
 
@@ -533,6 +594,8 @@ impl Book {
             })?;
 
         let mut cells: HashMap<(usize, usize), String> = HashMap::new();
+        // 只记「是红的」那些格：原表里绝大多数格不是红的
+        let mut red_cells: HashSet<(usize, usize)> = HashSet::new();
         let mut merges: Vec<(usize, usize, usize, usize)> = Vec::new();
         let mut r = Records::new(&self.wb, pos as usize);
         while let Some((rid, body)) = r.next() {
@@ -544,9 +607,13 @@ impl Book {
                     if body.len() >= 10 {
                         let row = rd_u16(body, 0).unwrap_or(0) as usize;
                         let col = rd_u16(body, 2).unwrap_or(0) as usize;
+                        let xf = rd_u16(body, 4).unwrap_or(0) as usize;
                         let isst = rd_u32(body, 6).unwrap_or(0) as usize;
                         let text = self.sst.get(isst).cloned().unwrap_or_default();
                         cells.insert((row, col), text);
+                        if self.is_red(xf) {
+                            red_cells.insert((row, col));
+                        }
                     }
                 }
                 REC_NUMBER => {
@@ -557,6 +624,9 @@ impl Book {
                             rd_f64(body, 6),
                         ) {
                             cells.insert((row, col), fmt_num(v));
+                            if self.is_red(rd_u16(body, 4).unwrap_or(0) as usize) {
+                                red_cells.insert((row, col));
+                            }
                         }
                     }
                 }
@@ -568,6 +638,9 @@ impl Book {
                             rd_u32(body, 6),
                         ) {
                             cells.insert((row, col), fmt_num(rk_value(rk)));
+                            if self.is_red(rd_u16(body, 4).unwrap_or(0) as usize) {
+                                red_cells.insert((row, col));
+                            }
                         }
                     }
                 }
@@ -577,8 +650,12 @@ impl Book {
                         let col0 = rd_u16(body, 2).unwrap_or(0) as usize;
                         let n = (body.len() - 6) / 6;
                         for k in 0..n {
+                            let col = col0 + k;
                             if let Some(rk) = rd_u32(body, 4 + k * 6 + 2) {
-                                cells.insert((row, col0 + k), fmt_num(rk_value(rk)));
+                                cells.insert((row, col), fmt_num(rk_value(rk)));
+                                if self.is_red(rd_u16(body, 4 + k * 6).unwrap_or(0) as usize) {
+                                    red_cells.insert((row, col));
+                                }
                             }
                         }
                     }
@@ -591,6 +668,9 @@ impl Book {
                         let is_err = body[7];
                         if is_err == 0 {
                             cells.insert((row, col), if val != 0 { "TRUE" } else { "FALSE" }.into());
+                            if self.is_red(rd_u16(body, 4).unwrap_or(0) as usize) {
+                                red_cells.insert((row, col));
+                            }
                         }
                     }
                 }
@@ -600,7 +680,11 @@ impl Book {
                             rd_u16(body, 0).map(usize::from),
                             rd_u16(body, 2).map(usize::from),
                         ) {
+                            let red = self.is_red(rd_u16(body, 4).unwrap_or(0) as usize);
                             let res = &body[6..14];
+                            if red {
+                                red_cells.insert((row, col));
+                            }
                             if res[6] == 0xFF && res[7] == 0xFF {
                                 // 特殊值：0=字符串（值在下一条 STRING 记录）1=布尔 2=错误 3=空
                                 if res[0] == 1 {
@@ -644,9 +728,13 @@ impl Book {
             let Some(v) = cells.get(&(*r1, *c1)).cloned() else {
                 continue;
             };
+            let red = red_cells.contains(&(*r1, *c1));
             for row in *r1..=*r2 {
                 for col in *c1..=*c2 {
                     cells.insert((row, col), v.clone());
+                    if red {
+                        red_cells.insert((row, col));
+                    }
                 }
             }
         }
@@ -654,18 +742,23 @@ impl Book {
         let max_row = cells.keys().map(|(r, _)| *r).max();
         let max_col = cells.keys().map(|(_, c)| *c).max();
         let mut rows = Vec::new();
+        let mut red = Vec::new();
         if let (Some(max_row), Some(max_col)) = (max_row, max_col) {
             for r in 0..=max_row {
                 let mut row = Vec::with_capacity(max_col + 1);
+                let mut row_red = Vec::with_capacity(max_col + 1);
                 for c in 0..=max_col {
                     row.push(cells.get(&(r, c)).cloned().unwrap_or_default());
+                    row_red.push(red_cells.contains(&(r, c)));
                 }
                 rows.push(row);
+                red.push(row_red);
             }
         }
         Ok(Sheet {
             name: real_name,
             rows,
+            red,
         })
     }
 
@@ -687,6 +780,30 @@ impl Book {
             }
         }
         None
+    }
+
+    /// 某一格字体是不是红色。`xf` 是单元格记录里的 XF 索引。
+    ///
+    /// 判据放宽到「红得明显」：R ≥ 150 且 G、B ≤ 90。WPS 里手点的「红色」一般是
+    /// 调色板 index 10 = FF0000，偶尔是 C00000 这类深红，都落在这个区间里；
+    /// 洋红 / 珊瑚红（G 或 B 偏高）不算——那种在原表里另有含义。
+    fn is_red(&self, xf: usize) -> bool {
+        let Some(&font) = self.xfs.get(xf) else {
+            return false;
+        };
+        let Some(&color) = self.fonts.get(font as usize) else {
+            return false;
+        };
+        // 调色板索引 >= 64 是系统色（原表基本不用），说不清就不算红
+        let rgb = if color < 64 {
+            self.palette
+                .get(&(color as u8))
+                .copied()
+                .or_else(|| builtin_rgb(color))
+        } else {
+            None
+        };
+        matches!(rgb, Some((r, g, b)) if r >= 150 && g <= 90 && b <= 90)
     }
 
     /// 只要表名（不解析单元格）。

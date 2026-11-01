@@ -38,6 +38,15 @@ pub struct MobileRow {
     /// 既没入库号也没单号：不能标已出，但照常算未出、照常下发。
     #[serde(default)]
     pub blocked: bool,
+    /// 本次出货任务（桌面从截图导入的那批），手机端可以先只看这些。
+    #[serde(default)]
+    pub task: bool,
+    /// 任务号（按单号分组，T1/T2…），手机端显示在票卡片上
+    #[serde(default)]
+    pub task_id: String,
+    /// 这张票被谁领了（空 = 没人领）
+    #[serde(default)]
+    pub claimed_by: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -56,6 +65,8 @@ pub struct MobileInfo {
 struct Inner {
     info: Option<MobileInfo>,
     rows: Vec<MobileRow>,
+    /// 认领：单号 → 谁领的（手机点「领取任务」写进来）
+    claims: std::collections::HashMap<String, String>,
     stop: Option<Arc<AtomicBool>>,
 }
 
@@ -70,6 +81,7 @@ pub fn new_shared() -> MobileShared {
         inner: Mutex::new(Inner {
             info: None,
             rows: Vec::new(),
+            claims: std::collections::HashMap::new(),
             stop: None,
         }),
     })
@@ -170,9 +182,18 @@ fn build_info(port: u16, token: String) -> MobileInfo {
     }
 }
 
-fn bind_server() -> Result<(Server, u16), String> {
-    // 先试固定端口，方便手机记住地址；占用就退回系统分配
-    for port in [17650u16, 17651, 17652] {
+fn bind_server(prefer: Option<u16>) -> Result<(Server, u16), String> {
+    // 先把上次成功的端口放最前面：手机书签记的是完整 URL，端口一变书签就废了
+    let mut order: Vec<u16> = Vec::with_capacity(4);
+    if let Some(p) = prefer.filter(|p| *p > 1024) {
+        order.push(p);
+    }
+    for p in [17650u16, 17651, 17652] {
+        if !order.contains(&p) {
+            order.push(p);
+        }
+    }
+    for port in order {
         if let Ok(server) = Server::http(("0.0.0.0", port)) {
             return Ok((server, port));
         }
@@ -197,7 +218,12 @@ fn qr_svg(url: &str) -> String {
     }
 }
 
-pub fn start(shared: &MobileShared, rows: Vec<MobileRow>, token: String) -> Result<MobileInfo, String> {
+pub fn start(
+    shared: &MobileShared,
+    rows: Vec<MobileRow>,
+    token: String,
+    prefer_port: Option<u16>,
+) -> Result<MobileInfo, String> {
     let mut inner = shared.inner.lock().map_err(|e| e.to_string())?;
     if let Some(old) = inner.info.clone() {
         inner.rows = rows;
@@ -207,7 +233,7 @@ pub fn start(shared: &MobileShared, rows: Vec<MobileRow>, token: String) -> Resu
         return Ok(info);
     }
 
-    let (server, port) = bind_server()?;
+    let (server, port) = bind_server(prefer_port)?;
     let info = build_info(port, token);
 
     inner.rows = rows;
@@ -242,6 +268,8 @@ pub fn sync(shared: &MobileShared, mut rows: Vec<MobileRow>) {
             }) {
                 row.checked = old.checked;
             }
+            // 认领状态由 inner.claims 现填，下发前不在这里存
+            row.claimed_by = inner.claims.get(&row.waybill).cloned().unwrap_or_default();
         }
         inner.rows = rows;
     }
@@ -253,11 +281,16 @@ pub fn set_check(shared: &MobileShared, waybill: &str, inbound: &str, name: &str
 }
 
 pub fn rows(shared: &MobileShared) -> Vec<MobileRow> {
-    shared
-        .inner
-        .lock()
-        .map(|inner| inner.rows.clone())
-        .unwrap_or_default()
+    match shared.inner.lock() {
+        Ok(inner) => {
+            let mut rows = inner.rows.clone();
+            for row in rows.iter_mut() {
+                row.claimed_by = inner.claims.get(&row.waybill).cloned().unwrap_or_default();
+            }
+            rows
+        }
+        Err(_) => Vec::new(),
+    }
 }
 
 pub fn info(shared: &MobileShared) -> Option<MobileInfo> {
@@ -391,6 +424,36 @@ fn handle(mut req: Request, shared: &MobileShared) {
                 respond(req, json!({"error": "没找到这一行"}).to_string(), "application/json; charset=utf-8", 404)
             }
         }
+        (Method::Post, "/api/claim") => {
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_err() {
+                respond(req, json!({"error": "读不到请求体"}).to_string(), "application/json", 400);
+                return;
+            }
+            let v: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(v) => v,
+                Err(_) => {
+                    respond(req, json!({"error": "请求体不是 JSON"}).to_string(), "application/json", 400);
+                    return;
+                }
+            };
+            let waybill = v["waybill"].as_str().unwrap_or("");
+            let who = v["who"].as_str().unwrap_or("");
+            match claim(shared, waybill, who) {
+                Some(owner) => respond(
+                    req,
+                    json!({"ok": true, "claimedBy": owner}).to_string(),
+                    "application/json; charset=utf-8",
+                    200,
+                ),
+                None => respond(
+                    req,
+                    json!({"error": "单号或名字是空的"}).to_string(),
+                    "application/json; charset=utf-8",
+                    400,
+                ),
+            }
+        }
         (Method::Get, "/api/ping") => respond(
             req,
             json!({"ok": true}).to_string(),
@@ -408,9 +471,35 @@ fn handle(mut req: Request, shared: &MobileShared) {
 
 fn previous(shared: &MobileShared) -> (Vec<MobileRow>, u64) {
     match shared.inner.lock() {
-        Ok(inner) => (inner.rows.clone(), now_secs()),
+        Ok(inner) => {
+            // 认领状态不另存一份：每次下发按单号现填，避免两边漂移
+            let mut rows = inner.rows.clone();
+            for row in rows.iter_mut() {
+                row.claimed_by = inner.claims.get(&row.waybill).cloned().unwrap_or_default();
+            }
+            (rows, now_secs())
+        }
         Err(_) => (Vec::new(), 0),
     }
+}
+
+/// 手机端「领取任务」：把某一票记到某人名下。同一票先到先得，不覆盖别人。
+///
+/// 返回这票的归属人：刚领到就是 who，已经被别人领了就是那个人（前端据此提示）。
+fn claim(shared: &MobileShared, waybill: &str, who: &str) -> Option<String> {
+    let Ok(mut inner) = shared.inner.lock() else {
+        return None;
+    };
+    let w = waybill.trim().to_string();
+    let who = who.trim().to_string();
+    if w.is_empty() || who.is_empty() {
+        return None;
+    }
+    if let Some(existing) = inner.claims.get(&w) {
+        return Some(existing.clone());
+    }
+    inner.claims.insert(w, who.clone());
+    Some(who)
 }
 
 fn toggle(shared: &MobileShared, waybill: &str, inbound: &str, name: &str, checked: bool) -> bool {
@@ -436,6 +525,22 @@ mod tests {
     use super::*;
     use std::io::{Read as _, Write as _};
     use std::net::TcpStream;
+
+
+    #[test]
+    fn claim_is_first_come_first_served() {
+        let shared = new_shared();
+        assert_eq!(claim(&shared, "W1", "张三"), Some("张三".to_string()));
+        // 已经有人领了：不覆盖，返回原主人，前端据此提示「已被 X 领了」
+        assert_eq!(claim(&shared, "W1", "李四"), Some("张三".to_string()));
+        assert_eq!(
+            shared.inner.lock().unwrap().claims.get("W1").cloned(),
+            Some("张三".to_string())
+        );
+        // 空单号 / 空名字直接拒
+        assert_eq!(claim(&shared, "", "王五"), None);
+        assert_eq!(claim(&shared, "W2", "  "), None);
+    }
 
     #[test]
     fn token_roundtrip() {
@@ -466,6 +571,14 @@ mod tests {
                 checked: false,
                 issues: vec![],
                 blocked: false,
+
+                task: false,
+
+
+                task_id: String::new(),
+
+
+                claimed_by: String::new(),
             }];
         }
         assert!(toggle(&shared, "S1", "I1", "货", true));
@@ -496,6 +609,11 @@ mod tests {
                 checked: false,
                 issues: vec![],
                 blocked: true,
+                task: false,
+
+                task_id: String::new(),
+
+                claimed_by: String::new(),
             }];
         }
         assert!(!toggle(&shared, "", "", "没有箱唛", true));
@@ -524,8 +642,16 @@ mod tests {
             checked: false,
             issues: vec![],
             blocked: false,
+
+            task: false,
+
+
+            task_id: String::new(),
+
+
+            claimed_by: String::new(),
         }];
-        let info = start(&shared, seed, "testtoken".into()).expect("start server");
+        let info = start(&shared, seed, "testtoken".into(), None).expect("start server");
         let host = format!("127.0.0.1:{}", info.port);
 
         let page = http(&host, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");

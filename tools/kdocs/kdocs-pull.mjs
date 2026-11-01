@@ -58,6 +58,8 @@ function startHeadless() {
     ],
     { stdio: "ignore", windowsHide: true },
   );
+  // 别让子进程把 Node 的事件循环挂住：下载成功后脚本要能自己退出
+  kid.unref();
   kid.on("error", () => {
     // 起不来就让后面的轮询报错，别抛
   });
@@ -162,30 +164,79 @@ if (!target) {
 
 // fid 从页面 cookie 里取（reuse_session_id=edit/489766365819），取不到用兜底值
 const READ_META = `
-  const fid = (document.cookie.match(/reuse_session_id=edit\\/(\\d+)/) || [])[1] || "";
-  return { fid, title: document.title || "", href: location.href };
+  let ck = "";
+  let denied = false;
+  try { ck = document.cookie || ""; } catch { denied = true; }
+  return {
+    ok: /^https?:/.test(location.href) && !denied,
+    denied,
+    href: location.href,
+    ready: document.readyState,
+    fid: (ck.match(/reuse_session_id=edit\\/(\\d+)/) || [])[1] || "",
+    title: document.title || "",
+  };
 `;
-let meta = await evaluate(target, READ_META);
-if (selfStarted && !meta?.fid) {
+
+// 刚拉起 Chrome 时 /json/list 已经报出 kdocs 的 URL，但文档还是初始 about:blank，
+// 这时读 document.cookie 会抛 SecurityError: Access is denied for this document
+//（2026-10-31 用户点同步就撞上）。等到文档真正提交、拿到 kdocs 的源再往下走。
+async function waitMeta(t, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      last = await evaluate(t, READ_META);
+      if (last?.ok) return last;
+    } catch {
+      // 初始文档还没换掉，继续等
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return last;
+}
+
+let meta = await waitMeta(target);
+if (!meta?.ok) {
+  console.error(
+    `云表格页面还没加载完（停在 ${meta?.href ?? "?"}）。\n` +
+      "等一下再点同步；一直这样就把 kdocs-login.bat 那个窗口刷新一次。"
+  );
+  process.exit(4);
+}
+if (selfStarted && !meta.fid) {
   // 无界面刚起来时页面还在跑登录态，等它一会儿再问
-  for (let i = 0; i < 10 && !meta?.fid; i++) {
+  for (let i = 0; i < 10 && !meta.fid; i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    meta = await evaluate(target, READ_META);
+    meta = (await waitMeta(target, 3000)) || meta;
   }
 }
 // 页面没登录时 cookie 里没有 reuse_session_id
 const fid = meta?.fid || FALLBACK_FID;
 
-const info = await evaluate(
-  target,
-  `
-  const r = await fetch("/api/v3/office/file/${fid}/download?isblocks=false", { credentials: "include" });
-  const text = await r.text();
-  let j = null;
-  try { j = JSON.parse(text); } catch {}
-  return { status: r.status, isJson: !!j, url: j && j.download_url, size: j && j.file_size, fver: j && j.fver, head: text.slice(0, 120) };
-`
-);
+// 页面刚提交时可能马上又跳一次（登录态探测），fetch 会跟着失败，重试几次
+let info = null;
+for (let i = 0; i < 5; i++) {
+  try {
+    info = await evaluate(
+      target,
+      `
+      const r = await fetch("/api/v3/office/file/${fid}/download?isblocks=false", { credentials: "include" });
+      const text = await r.text();
+      let j = null;
+      try { j = JSON.parse(text); } catch {}
+      return { status: r.status, isJson: !!j, url: j && j.download_url, size: j && j.file_size, fver: j && j.fver, head: text.slice(0, 120) };
+    `
+    );
+  } catch {
+    info = null;
+  }
+  if (info) break;
+  await new Promise((r) => setTimeout(r, 800));
+}
+if (!info) {
+  console.error("页面还在跳转，取不到下载地址，等一下再点同步。");
+  process.exit(6);
+}
 
 if (info?.status === 401 || info?.status === 403 || !info?.isJson) {
   console.error(
@@ -244,3 +295,4 @@ console.log(
     docUrl: target.url,
   })
 );
+process.exit(0);

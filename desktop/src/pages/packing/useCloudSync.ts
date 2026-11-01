@@ -52,6 +52,8 @@ export type CloudSync = {
   setCloudSheets: (v: string[]) => void;
   /** 从云表格同步；`background` 会被并发挡掉，`applyAnyway` 见上。 */
   sync: (sheetName?: string, opts?: SyncOpts) => Promise<void>;
+  /** 不联网，直接解析上次下载的 .xls 缓存（测试 / 断网时用）。 */
+  openCached: () => Promise<void>;
 };
 
 /**
@@ -123,6 +125,34 @@ export function useCloudSync(opts: Options): CloudSync {
     }
   }, []);
 
+  /** 直接读上次下载的 .xls：不碰 Chrome、不问版本号，测试时省得每次去云端拉。 */
+  const openCached = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const s = await api.allSettings();
+      const path = (s[KEY_KDOCS_LAST] || "").trim();
+      if (!path) {
+        throw new Error("还没有缓存文件：先点一次「从云表格同步」");
+      }
+      const sheetName = (s[KEY_KDOCS_SHEET] || "").trim();
+      const sheet = await api.parsePackingXls(path, sheetName || null);
+      const cur = optsRef.current;
+      cur.onApplied(sheet);
+      setCloudSheet(sheetName || null);
+      setCloudUpdate(null);
+      const n = sheet.items.length;
+      cur.onHint(
+        n === 0
+          ? `本地缓存里没有能用的出货行（${path}）`
+          : `已用本地缓存${sheetName ? `「${sheetName}」` : ""}：${n} 条待办（没联网）`,
+      );
+    } catch (e) {
+      optsRef.current.onError(e);
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
   /** 定时后台问版本号：没变什么都不做，变了亮提示（换不换由「有更新自动换表」决定）。 */
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -143,5 +173,6 @@ export function useCloudSync(opts: Options): CloudSync {
     setCloudSheet,
     setCloudSheets,
     sync,
+    openCached,
   };
 }

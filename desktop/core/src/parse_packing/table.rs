@@ -13,6 +13,8 @@ pub(crate) enum Col {
     Customer,
     Mark,
     Waybill,
+    /// 原表的「到货情况」（到货 / 未到货 / 部分到货），界面插在出货详情与备注之间
+    Arrival,
     Ignore,
     Unknown,
 }
@@ -46,6 +48,10 @@ pub(crate) fn classify(header: &str) -> Col {
     if has(&["数量", "件数", "箱数", "qty", "quantity", "pcs"]) {
         return Col::Qty;
     }
+    // 「到货情况」要排在「标记 / 状态」之前，否则会被当成标记列
+    if has(&["到货"]) {
+        return Col::Arrival;
+    }
     if has(&["标记", "已录", "勾选", "状态", "mark"]) {
         return Col::Mark;
     }
@@ -68,12 +74,16 @@ pub(crate) struct RawRow {
     qty_raw: String,
     inbound: String,
     destination: String,
+    /// 原表的「到货情况」
+    arrival: String,
     customer: String,
     waybill: Option<String>,
     /// None = 这一格是空的（可能是合并单元格的下半部分）；Some(true/false) = 格子里有内容
     mark: Option<bool>,
     /// 格子内容不止一个「1」（例如 `TK5 1`），标出来让人确认
     mark_text: bool,
+    /// 原表里「产品名称 → 入库号」这几列字体是红色的（红色 = 已出货）
+    red: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +95,7 @@ pub(crate) struct Strategy {
     customer: Option<usize>,
     mark: Option<usize>,
     waybill: Option<usize>,
+    arrival: Option<usize>,
     label: String,
 }
 
@@ -92,6 +103,7 @@ impl Strategy {
     fn from_header(header: &[String]) -> Option<Self> {
         let (mut name, mut qty, mut inbound, mut dest, mut customer, mut mark, mut waybill) =
             (None, None, None, None, None, None, None);
+        let mut arrival = None;
         for (i, cell) in header.iter().enumerate() {
             match classify(cell) {
                 Col::Name if name.is_none() => name = Some(i),
@@ -101,6 +113,7 @@ impl Strategy {
                 Col::Customer if customer.is_none() => customer = Some(i),
                 Col::Mark if mark.is_none() => mark = Some(i),
                 Col::Waybill if waybill.is_none() => waybill = Some(i),
+                Col::Arrival if arrival.is_none() => arrival = Some(i),
                 _ => {}
             }
         }
@@ -125,6 +138,7 @@ impl Strategy {
             customer,
             mark,
             waybill,
+            arrival,
             label,
         })
     }
@@ -143,11 +157,23 @@ impl Strategy {
             customer: None,
             mark: Some(7),
             waybill: None,
+            arrival: None,
             label: "按截图模板列序：名称=1 数量=7 标记=8 目的地=10 入库号=11".to_string(),
         })
     }
 
-    fn row(&self, row: &[String]) -> RawRow {
+    /// 原表把「产品名称 → 入库号」这几列写成红字表示已出货。
+    /// 区间取这两列的列号之间（含两端），中间那些列（数量/长宽高…）红不红一样算，
+    /// 因为 WPS 里手刷红字时通常整段一起刷。
+    fn span_red(&self, red: Option<&[bool]>) -> bool {
+        let Some(marks) = red else {
+            return false;
+        };
+        let (lo, hi) = (self.name.min(self.inbound), self.name.max(self.inbound));
+        (lo..=hi).any(|i| marks.get(i).copied().unwrap_or(false))
+    }
+
+    fn row(&self, row: &[String], red: Option<&[bool]>) -> RawRow {
         let get = |i: usize| row.get(i).map(|s| s.trim().to_string()).unwrap_or_default();
         let waybill = self
             .waybill
@@ -159,10 +185,12 @@ impl Strategy {
             qty_raw: get(self.qty),
             inbound: get(self.inbound),
             destination: self.dest.map(get).unwrap_or_default(),
+            arrival: self.arrival.map(get).unwrap_or_default(),
             customer: self.customer.map(get).unwrap_or_default(),
             waybill,
             mark: None,
             mark_text: false,
+            red: self.span_red(red),
         };
         if let Some(i) = self.mark {
             if let Some(cell) = row.get(i) {
@@ -209,10 +237,12 @@ pub(crate) fn guess_row(row: &[String]) -> RawRow {
         qty_raw: qty_idx.map(|i| row[i].clone()).unwrap_or_default(),
         inbound,
         destination: String::new(),
+        arrival: String::new(),
         customer: String::new(),
         waybill: row.iter().find_map(|c| extract_waybill(c)),
         mark: None,
         mark_text: false,
+        red: false,
     }
 }
 
@@ -255,6 +285,16 @@ pub(crate) fn is_header_like(row: &[String]) -> bool {
 /// 为 true 时不再用「空单元格就抄上一行」猜合并——那会把真的空单元格伪造成上一票的值；
 /// 复用只发生在合并区内部，而这是 Excel 自己给的。
 pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> PackingSheet {
+    parse_table_styled(rows, merged_expanded, None)
+}
+
+/// 同 `parse_table`，另外带一张与二维表同形状的「红字」矩阵（来自 .xls 的字体颜色）。
+/// 红色只影响一件事：把这一行当成已出货。
+pub(crate) fn parse_table_styled(
+    rows: Vec<Vec<String>>,
+    merged_expanded: bool,
+    red: Option<&[Vec<bool>]>,
+) -> PackingSheet {
     let mut sheet = PackingSheet::default();
     if rows.is_empty() {
         sheet.warnings.push("没有读到任何数据行".to_string());
@@ -272,8 +312,17 @@ pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> Pack
     };
 
     let start = header.map(|i| i + 1).unwrap_or(0);
-    // 单号常常写在表格右侧的独立格子里（甚至只有一行），先整表扫一遍兜底
-    let table_waybill = rows.iter().flat_map(|r| r.iter()).find_map(|c| extract_waybill(c));
+    // 表头（前 3 行）里写着的「单号：xxx」= 整张表只有这一个单号（装箱单的老写法）。
+    // 单号写在数据行里（周报按段写、合并单元格跨段）时不算整表单号 —— 否则会把
+    // 后面某一段的单号倒着填到前面本来没有单号的行上（2026-10-31 用户反馈）。
+    // 只扫表头之前那几行（含表头行本身），数据行里出现的单号不算整表单号
+    let head_rows = if start == 0 { 1 } else { start };
+    let header_waybill = rows
+        .iter()
+        .take(head_rows)
+        .flat_map(|r| r.iter())
+        .find_map(|c| extract_waybill(c));
+    let table_waybill = header_waybill.clone();
     let mut items: Vec<PackingItem> = Vec::new();
     // 有真实合并信息（xlsx）时，空白就是空白，不许从上下行借
     let inherit_blank = !merged_expanded;
@@ -283,18 +332,30 @@ pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> Pack
     let mut waybills: Vec<String> = Vec::new();
     // 周报类表格按段写「单号：xxx」：段内向下沿用，遇到新的就切换
     let mut current_waybill = String::new();
+    // 至少有一行自己写了单号 → 这是「按票分段」的表，空行必须留空；
+    // 一行都没有（单号只在表头或末尾一条散行里）才能整表回填
+    let mut waybill_in_rows = false;
     // 表尾的合计行（整行只有一个「总箱数」）：不是货物，记下来当整表合计数
     let mut table_total: Option<i64> = None;
 
-    for row in rows.iter().skip(start) {
+    for (ri, row) in rows.iter().enumerate().skip(start) {
         if is_header_like(row) {
             continue;
         }
-        if let Some(w) = row.iter().find_map(|c| extract_waybill(c)) {
-            current_waybill = w;
+        // 单号只认这一行自己的格子（xls/xlsx 的合并单元格在 Book / apply_merges 里
+        // 已经铺开，整段合并的单号会出现在段内每一行）。以前这里把上一个单号
+        // 无脑往下沿用，云表格里没写单号的行就被算进了上一票
+        //（2026-10-31 用户反馈：翰林 六角柄… 明明没单号，桌面表格却显示 6812705130）。
+        // 只有拿不到合并信息的文本/OCR 才保留「段首写一次、段内沿用」。
+        let row_waybill = row.iter().find_map(|c| extract_waybill(c));
+        if inherit_blank {
+            if let Some(w) = row_waybill.clone() {
+                current_waybill = w;
+            }
         }
+        let red_row = red.and_then(|m| m.get(ri)).map(|v| v.as_slice());
         let raw = match &strategy {
-            Some(s) => s.row(row),
+            Some(s) => s.row(row, red_row),
             None => guess_row(row),
         };
         // 客户名可能写在一行「只有客户名、没有货」的分隔行上（如「翰林」），
@@ -341,12 +402,21 @@ pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> Pack
             qty_raw: raw.qty_raw.trim().to_string(),
             inbound: raw.inbound.trim().to_string(),
             destination: raw.destination.trim().to_string(),
+            arrival: raw.arrival.trim().to_string(),
             customer: raw.customer.trim().to_string(),
             waybill: raw
                 .waybill
                 .clone()
-                .unwrap_or_else(|| current_waybill.clone()),
-            checked: raw.mark.unwrap_or(false),
+                .or_else(|| row_waybill.clone())
+                .unwrap_or_else(|| {
+                    if inherit_blank {
+                        current_waybill.clone()
+                    } else {
+                        String::new()
+                    }
+                }),
+            // 原表红字 = 已出货；「标记」列里的 1 是老表自己的写法，两者任一即已出
+            checked: raw.mark.unwrap_or(false) || raw.red,
             ..Default::default()
         };
 
@@ -397,6 +467,8 @@ pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> Pack
             item.issues.push("inbound_sci".to_string());
         }
         if !item.waybill.is_empty() {
+            // 单号是写在数据行上的（按票分段）→ 位置有意义，空行不许被整表回填
+            waybill_in_rows = true;
             waybills.push(item.waybill.clone());
         }
 
@@ -434,15 +506,20 @@ pub(crate) fn parse_table(rows: Vec<Vec<String>>, merged_expanded: bool) -> Pack
         }
     }
     sheet.waybill = uniq.first().cloned().unwrap_or_default();
-    // 多个单号是常态（周报按单号分票展示），不提示；这里只记第一个当默认值
-    for item in items.iter_mut() {
-        if item.waybill.is_empty() {
-            item.waybill = sheet.waybill.clone();
+    // 多个单号是常态（周报按单号分票展示），不提示；这里只记第一个当默认值。
+    // 回填只发生在「整张表只有一个单号、而且没有一行把它写在数据行上」时
+    //（装箱单 / OCR 的老写法：单号只写一次）。按票分段的表（哪怕只有一个单号）
+    // 位置是有意义的，没写单号的行就是还没出单，必须留空
+    //（留空才能按「没单号没入库号不能出货」处理）。
+    if uniq.len() == 1 && !waybill_in_rows {
+        for item in items.iter_mut() {
+            if item.waybill.is_empty() {
+                item.waybill = sheet.waybill.clone();
+            }
         }
     }
-    if sheet.waybill.is_empty() {
-        sheet.warnings.push("没识别到单号（表右侧的「单号: …」）".to_string());
-    }
+    // 单号为空不再提示：云表格里很多票本来就是「还没出单」，顶一条黄条只会天天挡视线
+    //（2026-10-31 用户要求取消）。业务规则照样生效：没单号没入库号的行仍然不能标已出。
 
     // 表尾有合计行就用它；没有才退回文字里的「现N件」
     sheet.expected_qty = table_total.or_else(|| extract_expected(&rows));

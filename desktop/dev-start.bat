@@ -23,15 +23,17 @@ if errorlevel 1 goto :fail
 echo.
 :deps_ok
 
-rem ---------- 端口检查（vite 固定 1420）----------
-netstat -ano | findstr ":1420" | findstr LISTENING >nul
-if errorlevel 1 goto :port_ok
-echo [警告] 端口 1420 已被占用，通常意味着另一个 dev 窗口还开着。
-echo         继续启动会因为端口冲突失败。
-set "GO="
-set /p "GO=仍要继续？[Y/N] "
-if /i not "%GO%"=="Y" goto :end
-:port_ok
+rem ---------- 端口检查（vite 固定 1420）：残留的 dev 直接结束，不再询问 ----------
+set "KILLED="
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":1420 " ^| findstr LISTENING') do (
+  echo [提示] 端口 1420 被 PID %%P 占用，先结束它...
+  taskkill /f /pid %%P >nul 2>&1
+  set "KILLED=1"
+)
+if defined KILLED (
+  echo         已结束，等 1 秒让端口释放...
+  timeout /t 1 /nobreak >nul
+)
 
 rem ---------- 旧进程提示（不阻塞，只提醒）----------
 tasklist /fi "imagename eq desktop.exe" 2>nul | find /i "desktop.exe" >nul

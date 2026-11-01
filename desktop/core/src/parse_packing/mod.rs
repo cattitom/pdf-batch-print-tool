@@ -32,6 +32,8 @@ pub struct PackingItem {
     pub qty_raw: String,
     pub inbound: String,
     pub destination: String,
+    /// 原表的「到货情况」原样带过来（到货 / 未到货 / 部分到货），界面只读展示
+    pub arrival: String,
     pub waybill: String,
     /// 客户 / 供应商名称（表里通常只在段首写一次，下面沿用）
     pub customer: String,
@@ -150,8 +152,10 @@ pub fn parse_xls_file(
     let data = book
         .sheet(&picked)
         .map_err(|e| PackingError::new("xls", e))?;
-    // 合并单元格在 xls::Book 里已经铺开了（等价于 xlsx 走的 apply_merges）
-    Ok((parse_table(data.rows, true), picked, names))
+    // 合并单元格在 xls::Book 里已经铺开了（等价于 xlsx 走的 apply_merges）；
+    // 红字矩阵一起传下去：原表里红色字体 = 已出货
+    let red = data.red;
+    Ok((parse_table_styled(data.rows, true, Some(&red)), picked, names))
 }
 
 /// 直接解析已经切好的二维表（OCR、外部导入用）。

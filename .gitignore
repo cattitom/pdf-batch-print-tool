@@ -57,3 +57,9 @@ desktop/models/*
 /.tmp/
 /.npm-cache/
 /oil-ui-work/
+
+# ---- 历史调试脚本（早期查 .xls 用的临时 probe，本地留着就行）----
+desktop/core/examples/probe_*.rs
+desktop/core/examples/row_probe*.rs
+desktop/core/examples/wb_*.rs
+desktop/core/examples/waybill_check.rs

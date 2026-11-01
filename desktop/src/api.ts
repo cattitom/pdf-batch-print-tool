@@ -2,6 +2,9 @@
 // JSON 契约与 src-tauri/src/commands.rs 的 DTO 一致（camelCase + type tag）
 
 import { invoke } from "@tauri-apps/api/core";
+// 静态引入：App.tsx 已静态依赖 @tauri-apps/api/webview（内部再引 event.js），
+// 这里再动态 import 无法拆出独立 chunk，只会触发 INEFFECTIVE_DYNAMIC_IMPORT。
+import { listen } from "@tauri-apps/api/event";
 
 // ---------- 类型 ----------
 //
@@ -48,7 +51,6 @@ export interface ImposeProgress {
 export async function listenImposeProgress(
   cb: (p: ImposeProgress) => void
 ): Promise<() => void> {
-  const { listen } = await import("@tauri-apps/api/event");
   const un = await listen<ImposeProgress>(IMPOSE_PROGRESS_EVENT, (e) => cb(e.payload));
   return un;
 }
@@ -124,6 +126,12 @@ export interface MobileRowDto {
   issues: string[];
   /** 既没入库号也没单号：不能标已出（桌面/手机都封），但照常算未出、照常下发。 */
   blocked: boolean;
+  /** 本次出货任务（桌面从出货截图里导入的那批）。 */
+  task: boolean;
+  /** 任务号（按单号分组，T1/T2…） */
+  taskId: string;
+  /** 这张票被谁领了（空 = 没人领） */
+  claimedBy: string;
 }
 
 export interface MobileInfoDto {
@@ -208,6 +216,11 @@ export const api = {
   mobileResetToken: () => invoke<MobileInfoDto>("mobile_reset_token"),
   mobileStop: () => invoke<void>("mobile_stop"),
   mobileInfo: () => invoke<MobileInfoDto | null>("mobile_info"),
+  /** 一键放行局域网端口（内部会请一次 UAC）；返回一句给用户看的结果。 */
+  mobileAllowFirewall: () => invoke<string>("mobile_allow_firewall"),
+  /** 从「本次要出货」的截图里认入库号：codes 是认出来的，failed 是没读成功的图。 */
+  parseShipImages: (paths: string[]) =>
+    invoke<{ codes: string[]; failed: string[] }>("parse_ship_images", { paths }),
 
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),

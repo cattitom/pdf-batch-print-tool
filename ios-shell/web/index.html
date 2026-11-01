@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+    />
+    <title>出货助手</title>
+    <style>
+      :root {
+        --bg: #f1f3f5;
+        --card: #fff;
+        --text: #0f1115;
+        --muted: #61666b;
+        --line: rgba(15, 17, 21, 0.12);
+        --accent: #0f1115;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      /* 未连接：填地址 */
+      #setup {
+        min-height: 100%;
+        padding: calc(64px + env(safe-area-inset-top)) 24px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      #setup h1 { margin: 0; font-size: 22px; font-weight: 600; }
+      #setup p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+      #url {
+        height: 46px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--card);
+        font-size: 15px;
+        color: var(--text);
+        outline: none;
+        width: 100%;
+      }
+      #url:focus { border-color: var(--accent); }
+      #go {
+        height: 46px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      #go:active { background: #43454a; }
+      .row { display: flex; gap: 8px; }
+      .row button {
+        flex: 1;
+        height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--card);
+        font-size: 13px;
+        color: var(--text);
+      }
+      /* 已连接：全屏 iframe + 顶部小条 */
+      #view { position: fixed; inset: 0; display: flex; flex-direction: column; }
+      #bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+        background: rgba(241, 243, 245, 0.92);
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #bar button {
+        height: 30px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        font-size: 12px;
+        color: var(--text);
+      }
+      #status { margin-left: auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      #frame {
+        flex: 1;
+        width: 100%;
+        border: 0;
+        background: #fff;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <section id="setup">
+      <h1>出货助手</h1>
+      <p>回到电脑上，点「手机出货」→「复制链接」，把链接粘到下面。</p>
+      <input id="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="http://192.168.6.125:17650/?t=…" />
+      <button id="go">连接</button>
+      <div class="row">
+        <button id="paste">从剪贴板粘贴</button>
+        <button id="clear">清除记住的地址</button>
+      </div>
+      <p>手机和电脑要连同一个 Wi-Fi；电脑上的出货清单页面得开着。</p>
+    </section>
+
+    <section id="view" hidden>
+      <div id="bar">
+        <button id="back">换地址</button>
+        <button id="reload">刷新</button>
+        <span id="status"></span>
+      </div>
+      <iframe id="frame" allow="clipboard-read; clipboard-write"></iframe>
+    </section>
+
+    <script>
+      var KEY = "ship_url";
+      var $ = function (id) { return document.getElementById(id); };
+      var setup = $("setup"), view = $("view"), frame = $("frame"), status = $("status");
+
+      function normalize(raw) {
+        var s = (raw || "").trim();
+        if (!s) return "";
+        if (!/^https?:\/\//i.test(s)) s = "http://" + s;
+        return s;
+      }
+
+      function show(url) {
+        setup.hidden = true;
+        view.hidden = false;
+        status.textContent = url;
+        frame.src = url;
+      }
+
+      function open_(url) {
+        var u = normalize(url);
+        if (!u) return;
+        try { localStorage.setItem(KEY, u); } catch (e) {}
+        show(u);
+      }
+
+      $("go").addEventListener("click", function () { open_($("url").value); });
+      $("url").addEventListener("keydown", function (e) {
+        if (e.key === "Enter") open_($("url").value);
+      });
+
+      $("back").addEventListener("click", function () {
+        view.hidden = true;
+        setup.hidden = false;
+        $("url").value = "";
+        $("url").focus();
+      });
+      $("reload").addEventListener("click", function () {
+        if (frame.src) frame.src = frame.src;
+      });
+
+      $("paste").addEventListener("click", async function () {
+        try {
+          var t = await navigator.clipboard.readText();
+          $("url").value = normalize(t);
+        } catch (e) {
+          $("url").focus();
+        }
+      });
+      $("clear").addEventListener("click", function () {
+        try { localStorage.removeItem(KEY); } catch (e) {}
+        $("url").value = "";
+        status.textContent = "";
+      });
+
+      frame.addEventListener("load", function () {
+        var s = frame.src;
+        status.textContent = s.length > 40 ? "…" + s.slice(-38) : s;
+      });
+
+      // 记住过地址就直接进
+      try {
+        var saved = localStorage.getItem(KEY);
+        if (saved) show(saved);
+      } catch (e) {}
+    </script>
+  </body>
+</html>

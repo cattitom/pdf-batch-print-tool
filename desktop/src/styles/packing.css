@@ -823,3 +823,134 @@
 tr.packing-row-blocked > td {
   opacity: 0.6;
 }
+
+/* 导入出货截图弹窗 */
+.ship-drop {
+  border: 1.5px dashed var(--border-2);
+  border-radius: 10px;
+  padding: 26px 16px;
+  text-align: center;
+  cursor: pointer;
+  background: #fafbfc;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ship-drop:hover {
+  border-color: var(--text);
+  background: #fff;
+}
+.ship-drop-plus {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+}
+.ship-drop-title {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.ship-drop-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ship-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow: auto;
+}
+.ship-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 2px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ship-result {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f6f8fa;
+  font-size: 12.5px;
+}
+.ship-result-warn {
+  margin-top: 4px;
+  color: #8a5a0a;
+}
+.ship-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 本次出货任务标记（从截图导入的那批） */
+.task-mark {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+/* ---------- 一屏布局（2026-10-31）：整页不滚，只有表格体自己滚 ----------
+   之前表格体写死 520px，1200×860 窗口下整页要比一屏高出一截，得上下滑才能看到分页。
+   这里改成「页面高度锁死 → 卡片吃掉剩余高度 → 表格体 flex 撑满」，窗口怎么变都刚好一屏。 */
+
+.packing-page {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  /* .page 上的 margin:0 auto 会让 flex item 放弃 stretch、按内容宽度排，
+     表格最小 1100 就把整页撑宽；这里交给 flex 管宽度 */
+  width: 100%;
+  margin-inline: auto;
+}
+
+/* 从页面到卡片的每一层都要能「吃掉剩余高度」：漏一层，下面全靠内容撑开 */
+.packing-page > .packing-layout,
+.packing-page .packing-main,
+.packing-page .packing-main > .stack {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 明细卡片：固定字段（卡片头 / 单号筛选）保持原高，剩下的都给表格 */
+.packing-page .stack > .ant-card {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.packing-page .stack > .ant-card > .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* antd 表格的每一层容器都要放开高度，否则中间某层会按内容撑开 */
+.packing-page .packing-table,
+.packing-page .packing-table > .ant-spin,
+.packing-page .packing-table .ant-spin-nested-loading,
+.packing-page .packing-table .ant-spin-container,
+.packing-page .packing-table .ant-table,
+.packing-page .packing-table .ant-table-container {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.packing-page .packing-table .ant-table-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-height: none !important;
+  overflow-y: auto;
+}

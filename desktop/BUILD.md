@@ -46,8 +46,9 @@ desktop/
 
 前置：Node 22+、pnpm、Rust（MSVC）、WebView2。
 
-双击 `dev-start.bat`（等价于下面的命令）。脚本会检查 pnpm/Rust、提示 1420 端口是否已被占用、
-把日志级别设为 `debug`，并在启动前告诉你是否还有 desktop.exe 占着 `target\debug`。
+双击 `dev-start.bat`（等价于下面的命令）。脚本会检查 pnpm/Rust、**发现 1420 被占用就自动结束那个进程**
+（多半是上次没关干净的 dev，不再问 [Y/N]）、把日志级别设为 `debug`，并在启动前告诉你是否还有
+desktop.exe 占着 `target\debug`。
 
 ```bash
 cd desktop
@@ -111,7 +112,9 @@ powershell -File scripts\gen-bindings.ps1
 ## 打包
 
 双击 `build-release.bat`（或在本目录执行）即可，脚本会检查 pnpm/Rust 环境、确认程序没在运行、
-执行 `pnpm tauri build`，最后列出产物与大小；额外参数会透传（如 `build-release.bat --bundles nsis`）。
+执行 `pnpm tauri build`，最后列出产物与大小，并**自动打开产物目录**（`bundle/` 存在就开它，
+只有 `--no-bundle` 那种情况才回退到 `release/`，不再问 [Y/N]）；成功结束后窗口直接关掉
+（失败分支保留 `pause`，好让你看清报错，要全自动就把它也删掉）；额外参数会透传（如 `build-release.bat --bundles nsis`）。
 
 ```bash
 # 等价的手动命令

@@ -155,8 +155,17 @@ export default function App() {
         <div style={{ display: tab === "impose" ? "block" : "none" }}>
           <ImposePage pendingDrop={pendingDrop} />
         </div>
-        <div style={{ display: tab === "packing" ? "block" : "none" }}>
-          <PackingPage pendingDrop={packingDrop} />
+        {/* 出货清单要一屏放下：这一层必须是 flex 容器，页面才能把高度分配下去 */}
+        <div
+          style={{
+            display: tab === "packing" ? "flex" : "none",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+          }}
+        >
+          <PackingPage pendingDrop={packingDrop} active={tab === "packing"} />
         </div>
         <div style={{ display: tab === "boxplan" ? "block" : "none" }}>
           <BoxPlanPage />

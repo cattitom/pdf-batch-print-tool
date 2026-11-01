@@ -272,6 +272,9 @@ select {
   min-width: 0;
   overflow-y: auto;
   padding: 16px 20px 28px;
+  /* 各页的包装层按 flex item 排：出货清单靠这个才能把高度一路分到表格体（一屏布局） */
+  display: flex;
+  flex-direction: column;
 }
 
 .page {
@@ -347,45 +350,6 @@ select {
   user-select: text;
 }
 
-/* 扫码 / 单号定位 */
-.scan-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.scan-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--border-2);
-  border-radius: 6px;
-  background: #fff;
-  min-width: 220px;
-}
-.scan-box .anticon {
-  color: var(--faint);
-  font-size: 13px;
-}
-.scan-box input,
-.scan-box input:hover,
-.scan-box input:focus {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  outline: 0;
-  background: transparent;
-  box-shadow: none;
-  font-size: 12px;
-}
-.scan-box:focus-within {
-  border-color: var(--text);
-  box-shadow: 0 0 0 3px rgba(15, 17, 21, 0.08);
-}
 .toast {
   position: fixed;
   right: 24px;

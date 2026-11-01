@@ -1,0 +1,17 @@
+[package]
+name = "shipping-shell"
+version = "0.1.0"
+description = "出货助手（手机端壳，加载电脑上的出货清单页面）"
+authors = ["you"]
+edition = "2021"
+
+# 移动端目标要这三种 crate-type（Tauri iOS / Android 依赖 staticlib）
+[lib]
+name = "shipping_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

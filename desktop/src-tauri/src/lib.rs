@@ -62,6 +62,8 @@ pub fn run() {
             commands::mobile_rows,
             commands::mobile_stop,
             commands::mobile_info,
+            commands::mobile_allow_firewall,
+            commands::parse_ship_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

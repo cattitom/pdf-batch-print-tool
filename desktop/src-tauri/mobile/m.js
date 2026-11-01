@@ -137,7 +137,8 @@
   }
 
   function statusText(s) {
-    return s === "done" ? "已收" : s === "part" ? "部分" : "待收";
+    // 用「出」不用「收」：这是出货清单，不是收货单（2026-11-01 用户要求）
+    return s === "done" ? "已出" : s === "part" ? "部分" : "未出";
   }
 
   function renderCounts() {
@@ -146,6 +147,29 @@
     $left.textContent = String(all.left);
     var t = tickets();
     $sub.textContent = t.length + " 票 · " + all.n + " 行 · " + all.total + " 件";
+  }
+
+  /** 这一票的任务号（票内任意一行带 taskId 就行）；没有返回空 */
+  function taskOf(t) {
+    if (!t.waybill) return "";
+    for (var i = 0; i < t.rows.length; i++) {
+      if (t.rows[i].taskId) return t.rows[i].taskId;
+    }
+    return "";
+  }
+
+  /** 领取任务的那一行：没人领给按钮，有人领显示已领取 */
+  function claimHtml(t) {
+    if (!taskOf(t)) return "";
+    var who = t.rows[0].claimedBy || "";
+    if (who) {
+      return '<div class="t-claim done">已领取 ✓</div>';
+    }
+    return (
+      '<div class="t-claim"><button class="btn-claim" data-claim="' +
+      esc(t.waybill) +
+      '">领取任务</button></div>'
+    );
   }
 
   function ticketHtml(t) {
@@ -158,6 +182,7 @@
       esc(t.waybill) +
       '">' +
       '<div class="t-top"><span class="t-no mono">' +
+      (taskOf(t) ? '<b class="t-task">' + esc(taskOf(t)) + "</b> " : "") +
       esc(t.waybill) +
       '</span><span class="t-tag"><span class="tag ' +
       (s.status === "done" ? "ok" : s.status === "part" ? "part" : "") +
@@ -179,12 +204,14 @@
       " 件</span><span>" +
       s.pct +
       "%</span></div>" +
+      claimHtml(t) +
       "</article>"
     );
   }
 
   function matchTicket(t) {
     var s = stats(t.rows);
+    if (filter === "task" && !t.rows.some(function (r) { return r.task; })) return false;
     if (filter === "todo" && s.status === "done") return false;
     if (filter === "done" && s.status !== "done") return false;
     if (!q) return true;
@@ -225,14 +252,17 @@
       CHECK +
       "</button>" +
       '<div class="body">' +
+      // 顺序：客户 → 商品 → 入库号（件数在最右，2026-11-01 用户要求）
+      '<span class="cust" title="' + esc(r.customer || "") + '">' +
+      esc(r.customer || "—") +
+      "</span>" +
       '<div class="name">' +
       esc(r.name) +
       "</div>" +
-      '<div class="meta"><span class="mono">' +
+      '<span class="mono inb">' +
       esc(r.inbound || "无入库号") +
-      '</span><span class="dot"></span><span>' +
-      esc(r.customer || "—") +
-      "</span></div>" +
+      "</span>" +
+      (r.task ? '<span class="tag task">任务</span>' : "") +
       (hasProblem(r) ? '<span class="tag">待确认</span>' : "") +
       "</div>" +
       '<div class="qty"><b>' +
@@ -437,7 +467,44 @@
       });
   }
 
+  function claimTask(waybill) {
+    var who = "我";
+    setSync("领取中…");
+    fetch(url("/api/claim"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ waybill: waybill, who: who }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (j.error) {
+          toast(j.error);
+          return;
+        }
+        var owner = j.claimedBy || who;
+        toast(owner === who ? "已领取，去找货吧" : "这票已经被 " + owner + " 领了");
+        // 立刻回填，别等下一轮轮询
+        rows.forEach(function (r) {
+          if (r.waybill === waybill) r.claimedBy = owner;
+        });
+        renderTickets();
+        setSync(nowText());
+      })
+      .catch(function () {
+        toast("领取失败，检查网络");
+        setSync("连接断开 · 点右上角刷新", true);
+      });
+  }
+
   $tickets.addEventListener("click", function (e) {
+    var claimBtn = e.target.closest("[data-claim]");
+    if (claimBtn) {
+      e.stopPropagation();
+      claimTask(claimBtn.getAttribute("data-claim"));
+      return;
+    }
     var card = e.target.closest(".ticket");
     if (!card) return;
     showDoc(card.getAttribute("data-w"));

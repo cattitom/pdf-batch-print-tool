@@ -682,6 +682,8 @@ pub struct PackingItemDto {
     pub qty_raw: String,
     pub inbound: String,
     pub destination: String,
+    /// 原表的「到货情况」（到货 / 未到货 / 部分到货）
+    pub arrival: String,
     /// 客户 / 供应商（表里通常只在段首写一次，解析时向下沿用）
     pub customer: String,
     pub waybill: String,
@@ -721,6 +723,7 @@ impl From<core::PackingSheet> for PackingSheetDto {
                     qty_raw: i.qty_raw,
                     inbound: i.inbound,
                     destination: i.destination,
+                    arrival: i.arrival,
                     customer: i.customer,
                     waybill: i.waybill,
                     checked: i.checked,
@@ -934,6 +937,8 @@ mod tests {
 
 /// 手机端口令：存进本机设置，重启后不变；手机存书签就不用每次扫码。
 const MOBILE_TOKEN_KEY: &str = "mobile_token";
+/// 上次手机服务成功监听的端口：下次优先用它，手机书签（整条 URL）才不会失效。
+const MOBILE_PORT_KEY: &str = "mobile_port";
 
 fn mobile_token(state: &State<'_, AppState>) -> Result<String, ApiError> {
     let guard = db(state);
@@ -956,7 +961,17 @@ pub fn mobile_start(
     rows: Vec<MobileRow>,
 ) -> Result<MobileInfo, ApiError> {
     let token = mobile_token(&state)?;
-    mobile::start(&mobile_state, rows, token).map_err(|e| ApiError::new("mobile", e))
+    let prefer = db(&state)
+        .get_setting(MOBILE_PORT_KEY)
+        .ok()
+        .flatten()
+        .and_then(|s| s.trim().parse::<u16>().ok());
+    let info = mobile::start(&mobile_state, rows, token, prefer)
+        .map_err(|e| ApiError::new("mobile", e))?;
+    if info.port > 1024 {
+        let _ = db(&state).set_setting(MOBILE_PORT_KEY, &info.port.to_string());
+    }
+    Ok(info)
 }
 
 #[tauri::command]
@@ -970,7 +985,17 @@ pub fn mobile_reset_token(
         .set_setting(MOBILE_TOKEN_KEY, "")
         .map_err(ApiError::from)?;
     let token = mobile_token(&state)?;
-    mobile::start(&mobile_state, rows, token).map_err(|e| ApiError::new("mobile", e))
+    let prefer = db(&state)
+        .get_setting(MOBILE_PORT_KEY)
+        .ok()
+        .flatten()
+        .and_then(|s| s.trim().parse::<u16>().ok());
+    let info = mobile::start(&mobile_state, rows, token, prefer)
+        .map_err(|e| ApiError::new("mobile", e))?;
+    if info.port > 1024 {
+        let _ = db(&state).set_setting(MOBILE_PORT_KEY, &info.port.to_string());
+    }
+    Ok(info)
 }
 
 #[tauri::command]
@@ -1002,6 +1027,104 @@ pub fn mobile_stop(state: State<'_, MobileShared>) {
 #[tauri::command]
 pub fn mobile_info(state: State<'_, MobileShared>) -> Option<MobileInfo> {
     mobile::info(&state)
+}
+
+/// 一键放行局域网端口（Windows 防火墙入站）。
+///
+/// 先直接跑一次（程序本身是管理员时不用弹 UAC）；失败再 Start-Process -Verb RunAs 请用户确认。
+/// 最后用 show rule 复核，别只信 exit code。
+/// 从「本次要出货」的截图里认出入库号（一张或多张）。
+///
+/// 复用图片解析那条链（PaddleOCR → 切行切列 → core 解析），只看每行的入库号：
+/// 品名容易差一个字/空格，入库号是唯一键，对不上就当场报出来。
+#[tauri::command]
+pub fn parse_ship_images(paths: Vec<String>) -> Result<serde_json::Value, ApiError> {
+    let mut codes: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for path in paths {
+        match crate::ocr::parse_image(&path) {
+            Ok(sheet) => {
+                for item in sheet.items {
+                    let code = item.inbound.trim().to_string();
+                    if !code.is_empty() && !codes.contains(&code) {
+                        codes.push(code);
+                    }
+                }
+            }
+            Err(e) => {
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or(path.clone());
+                failed.push(format!("{name}：{e}"));
+            }
+        }
+    }
+    Ok(serde_json::json!({ "codes": codes, "failed": failed }))
+}
+
+#[tauri::command]
+pub fn mobile_allow_firewall() -> Result<String, ApiError> {
+    let bat = std::env::temp_dir().join("pdfprint-allow-mobile.bat");
+    let script = [
+        "@echo off",
+        "netsh advfirewall firewall delete rule name=\"PdfMobileReceive\" >nul 2>&1",
+        "netsh advfirewall firewall delete rule name=\"PdfMobileReceipt\" >nul 2>&1",
+        "netsh advfirewall firewall add rule name=\"PdfMobileReceive\" dir=in action=allow protocol=TCP localport=17650-17652 >nul",
+        "exit /b %errorlevel%",
+    ]
+    .join("\r\n");
+    std::fs::write(&bat, script)
+        .map_err(|e| ApiError::new("firewall", format!("写临时脚本失败：{e}")))?;
+
+    // 两条都先落成 String，别在 args 里塞 &format!(..) / to_string_lossy().as_ref()：
+    // 前者类型对不上（&String vs &str），后者借的是马上要 drop 的临时值。
+    let elevated_cmd = format!(
+        "Start-Process -FilePath '{}' -Verb RunAs -Wait -WindowStyle Hidden",
+        bat.display()
+    );
+    let bat_str = bat.to_string_lossy().to_string();
+
+    let run = |elevated: bool| -> bool {
+        let status = if elevated {
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", elevated_cmd.as_str()])
+                .status()
+        } else {
+            std::process::Command::new("cmd")
+                .args(["/c", bat_str.as_str()])
+                .status()
+        };
+        status.map(|s| s.success()).unwrap_or(false)
+    };
+
+    let mut ok = run(false);
+    if !ok {
+        // 没权限：请一次 UAC（用户点否这里会失败，照常返回提示）
+        ok = run(true);
+    }
+
+    // 复核：规则真的在才算成功
+    let verified = std::process::Command::new("netsh")
+        .args(["advfirewall", "firewall", "show", "rule", "name=PdfMobileReceive"])
+        .output()
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).to_string()
+                + &String::from_utf8_lossy(&o.stderr);
+            text.contains("PdfMobileReceive")
+        })
+        .unwrap_or(false);
+
+    if verified {
+        Ok("已放行 17650-17652（专用/公用网络都放行）。手机重新扫码试试".to_string())
+    } else if ok {
+        Err(ApiError::new("firewall", "命令执行了，但查不到规则，防火墙可能被组策略接管"))
+    } else {
+        Err(ApiError::new(
+            "firewall",
+            "没放行成功：可能是 UAC 里点了「否」，或者没有管理员权限",
+        ))
+    }
 }
 
 

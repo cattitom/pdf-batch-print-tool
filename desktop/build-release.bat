@@ -52,13 +52,11 @@ if exist "%REL%\bundle\nsis\*.exe" for %%F in ("%REL%\bundle\nsis\*.exe") do ech
 if exist "%REL%\bundle\msi\*.msi" for %%F in ("%REL%\bundle\msi\*.msi") do echo   MSI 安装包 : %%~fF  ^(%%~zF 字节^)
 
 echo.
-set "OPEN="
-set /p "OPEN=要打开产物目录吗？[Y/N] "
-if /i "%OPEN%"=="Y" if exist "%REL%\bundle" explorer "%REL%\bundle"
+rem open output folder by default (no prompt, per user request)
+if exist "%REL%\bundle" (start "" explorer "%REL%\bundle") else if exist "%REL%" (start "" explorer "%REL%")
 
 echo.
 echo 全部完成。
-pause
 exit /b 0
 
 :fail

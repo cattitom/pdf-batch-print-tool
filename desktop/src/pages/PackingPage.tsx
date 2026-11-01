@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StatsModal, type CustomerStat } from "./packing/StatsModal";
 import { MobileSheetModal } from "./packing/MobileSheetModal";
+import { ShipImagesModal, type ShipImageResult } from "./packing/ShipImagesModal";
 import { LogModal } from "./packing/LogModal";
 import {
   useCloudSync,
@@ -36,13 +37,14 @@ import {
   FileTextOutlined,
   FilterFilled,
   FolderOpenOutlined,
+  HistoryOutlined,
+  ImportOutlined,
   InboxOutlined,
   MobileOutlined,
   PieChartOutlined,
   PushpinOutlined,
   ReloadOutlined,
   SaveOutlined,
-  ScanOutlined,
   SearchOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -66,6 +68,7 @@ type FoldRow = {
   qtyRaw: string;
   inbound: string;
   destination: string;
+  arrival: string;
   customer: string;
   waybill: string;
   checked: boolean;
@@ -162,6 +165,65 @@ const KEY_AUTO_OPEN = "packing_auto_open";
 const KEY_PICKED = "packing_picked_waybills";
 /** 钉住的货（行指纹数组），侧边栏用。 */
 const KEY_PINNED = "packing_pinned";
+/** 本地手改过的单号（JSON：`入库号|商品名` → 单号）。原表没写单号的行，改完能记住，不写回原表。 */
+const KEY_WAYBILL_PATCH = "packing_waybill_patch";
+/** 本次要出货的货：从截图里认出来的入库号（JSON 数组）。手机端按它只显示这批。 */
+const KEY_TASKS = "packing_task_inbounds";
+/** 任务号：按单号分组的 `[{ id: "T1", waybill, rows, boxes }]`，手机端按它认领。 */
+const KEY_TASK_META = "packing_tasks";
+
+/** 一个任务 = 一票（单号），手机端领取后去货架找。 */
+type ShipTask = { id: string; waybill: string; rows: number; boxes: number };
+
+function parseTasks(raw?: string): ShipTask[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter((t): t is ShipTask => !!t && typeof t === "object" && typeof (t as ShipTask).id === "string")
+      .map((t) => ({
+        id: t.id,
+        waybill: String(t.waybill ?? ""),
+        rows: Number(t.rows) || 0,
+        boxes: Number(t.boxes) || 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** 解析「入库号数组」这种设置值，坏数据当空。 */
+function parseCodeList(raw?: string): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 单号覆盖的键：入库号 + 商品名。刻意不含单号本身，改完还能认回来。 */
+const waybillPatchKey = (r: { inbound: string; name: string }) =>
+  `${r.inbound.trim()}|${r.name.trim()}`;
+
+function parseWaybillPatch(raw?: string): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const out: Record<string, string> = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof val === "string" && val.trim()) out[k] = val.trim();
+      }
+      return out;
+    }
+  } catch {
+    // 坏数据当没有
+  }
+  return {};
+}
 
 /** 既没入库号也没单号：客户还没给箱唛，货还不能发——灰着、不让标已出，但照常算未出/进手机/进导出。 */
 const rowBlocked = (r: PackingItemDto) => !r.inbound.trim() && !r.waybill.trim();
@@ -199,8 +261,11 @@ function toMarkdown(rows: PackingItemDto[]): string {
 /** 包一层「用户改过的行」：编辑后重新算 md，不回后端。 */
 export default function PackingPage({
   pendingDrop,
+  active = true,
 }: {
   pendingDrop?: { paths: string[]; nonce: number } | null;
+  /** 当前是不是停在这一页：切走时把手机出货面板收起（服务不停） */
+  active?: boolean;
 }) {
   const [rows, setRows] = useState<PackingItemDto[]>([]);
   const [sheet, setSheet] = useState<PackingSheetDto | null>(null);
@@ -221,6 +286,8 @@ export default function PackingPage({
 
   /** 出货状态记忆：指纹 → 是否已出。启动时从数据库读一次，点一下逐条写回。 */
   const checkedRef = useRef<Record<string, boolean>>({});
+  /** 本地手改的单号（`入库号|商品名` → 单号），解析完铺表时套上去。 */
+  const waybillPatchRef = useRef<Record<string, string>>({});
   /** 手机出货的轮询里要读最新 rows，避免闭包拿到旧表 */
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -234,11 +301,9 @@ export default function PackingPage({
   const [statsOpen, setStatsOpen] = useState(false);
   /** 顶部搜索词（模糊匹配商品/客户/入库号/单号） */
   const [q, setQ] = useState("");
-  /** 扫码 / 单号定位框 */
-  const [scan, setScan] = useState("");
   /** 勾了「有更新自动换表」就静默应用，否则只亮提示 */
   const [autoSync, setAutoSync] = useState(false);
-  /** 定位结果提示（2.6s 后自动消失） */
+  /** 右下角浮条提示（云端同步等，2.6s 后自动消失） */
   const [scanHint, setScanHint] = useState<string | null>(null);
   /** 只看有问题的行 */
   const [onlyIssues, setOnlyIssues] = useState(false);
@@ -246,6 +311,20 @@ export default function PackingPage({
   const [selected, setSelected] = useState<string[]>([]);
   /** 手机出货：局域网服务信息 + 弹窗 */
   const [mobileOpen, setMobileOpen] = useState(false);
+  /** 本次出货任务：截图里认出来的入库号 */
+  const [taskCodes, setTaskCodes] = useState<string[]>([]);
+  /** 导入出货截图弹窗：开没开 / 待识别的图 / 识别中 / 上次识别结果 */
+  const [shipImagesOpen, setShipImagesOpen] = useState(false);
+  /** 拖放回调里要读「弹窗开没开」，用 ref 免得闭包拿到旧值 */
+  const shipOpenRef = useRef(false);
+  const [shipPaths, setShipPaths] = useState<string[]>([]);
+  const [shipBusy, setShipBusy] = useState(false);
+  const [shipResult, setShipResult] = useState<ShipImageResult | null>(null);
+  shipOpenRef.current = shipImagesOpen;
+  /** 只看任务行 */
+  const [taskOnly, setTaskOnly] = useState(false);
+  /** 任务号（按单号分组），识别成功后生成，手机端领取用 */
+  const [shipTasks, setShipTasks] = useState<ShipTask[]>([]);
   const [mobileInfo, setMobileInfo] = useState<MobileInfoDto | null>(null);
   /** 钉住的行指纹（表格上方的钉住条） */
   const [pinned, setPinned] = useState<string[]>([]);
@@ -311,8 +390,15 @@ export default function PackingPage({
   const [colFilters, setColFilters] = useState<Record<string, string[] | null>>({});
   const checkedFilter = colFilters.checked ?? null;
   const kw = q.trim().toLowerCase();
+  const taskSet = useMemo(() => new Set(taskCodes.map((c) => c.trim())), [taskCodes]);
+  /** 单号 → 任务号（T1/T2…） */
+  const taskIdByWaybill = useMemo(
+    () => new Map(shipTasks.map((t) => [t.waybill, t.id])),
+    [shipTasks]
+  );
   const visibleOrder = shownOrder.filter((i) => {
     const r = rows[i];
+    if (taskOnly && !taskSet.has(r.inbound.trim())) return false;
     if (onlyIssues && !r.issues.some((c) => PROBLEM_ISSUES.has(c))) return false;
     if (kw) {
       const matched =
@@ -396,6 +482,7 @@ export default function PackingPage({
           qtyRaw: "",
           inbound: "",
           destination: "",
+          arrival: "",
           customer: "",
           waybill: rows[block[0]].waybill,
           checked: false,
@@ -464,32 +551,6 @@ export default function PackingPage({
     }
     lastPickRef.current = key;
     toggleWaybill(key);
-  };
-
-  /** 扫码 / 输入：先匹配单号（票），再匹配入库号；找不到给个提示。 */
-  const locate = (raw: string) => {
-    const v = raw.trim();
-    if (!v) return;
-    const doc = progress.find((p) => p.key === v) ?? progress.find((p) => p.key.includes(v));
-    if (doc) {
-      setPickedWaybills([doc.key]);
-      setQ("");
-      setOnlyIssues(false);
-      setScan("");
-      setScanHint(`已定位到单号 ${doc.waybill}`);
-      return;
-    }
-    const line =
-      rows.find((r) => r.inbound.trim() === v) ?? rows.find((r) => r.waybill.trim() === v);
-    if (line) {
-      setPickedWaybills([]);
-      setQ(line.inbound || line.waybill);
-      setOnlyIssues(false);
-      setScan("");
-      setScanHint(`已定位到「${line.name}」`);
-      return;
-    }
-    setScanHint("没找到这个单号 / 入库号");
   };
 
   useEffect(() => {
@@ -590,6 +651,23 @@ export default function PackingPage({
         ),
     },
     {
+      // 本次出货任务：从截图导入时打勾，手机端默认只看这批。放最左边，扫一眼就知道哪几行要出
+      title: "任务",
+      key: "task",
+      width: 60,
+      align: "center" as const,
+      render: (_: unknown, r: TableRow) => {
+        if (isFold(r)) return null;
+        if (!taskSet.has(r.inbound.trim())) return <span className="cell-dash">—</span>;
+        const id = taskIdByWaybill.get(r.waybill.trim() || "未识别单号");
+        return (
+          <span className="task-mark" title={`本次任务 ${id ?? ""}（按单号分组）`}>
+            {id ?? "✓"}
+          </span>
+        );
+      },
+    },
+    {
       title: filterTitle("客户名称", "customer", custOptions),
       dataIndex: "customer",
       width: 108,
@@ -673,6 +751,20 @@ export default function PackingPage({
         ),
     },
     {
+      // 原表的「到货情况」，插在出货详情与备注之间（2026-10-31 用户要求）
+      title: "到货情况",
+      dataIndex: "arrival",
+      width: 104,
+      render: (v: string, r: TableRow) =>
+        isFold(r) ? null : (
+          <Input
+            variant="borderless"
+            value={v}
+            onChange={(e) => patch(r.__idx, { arrival: e.target.value })}
+          />
+        ),
+    },
+    {
       title: "备注",
       key: "issues",
       width: 118,
@@ -735,9 +827,10 @@ export default function PackingPage({
         isFold(r) ? null : (
           <Input
             variant="borderless"
+            className="wb-cell"
             value={v}
             style={monoStyle}
-            onChange={(e) => patch(r.__idx, { waybill: e.target.value })}
+            onChange={(e) => setWaybill(r.__idx, e.target.value)}
           />
         ),
     },
@@ -784,10 +877,18 @@ export default function PackingPage({
   ];
 
   const applySheet = (s: PackingSheetDto) => {
-    // 重新解析同一份表时，把之前勾过的「已录」按指纹认回来
+    // 原表里「产品名称 → 入库号」刷红字的就是已出货：这是原表作者亲手标的，比本地点出来的可信，
+    // 所以红字的行直接用解析结果（本地旧记录不覆盖它）；其余行再把之前勾过的状态按指纹认回来。
     const items = s.items.map((it) => {
-      const saved = checkedRef.current[rowKey(it)];
-      return saved === undefined ? it : { ...it, checked: saved };
+      // 原表没写单号的行，这里先套上本地手改的那一个（测试 / 客户事后补单号都用得上）
+      const local = waybillPatchRef.current[waybillPatchKey(it)];
+      const row = local ? { ...it, waybill: local } : it;
+      if (row.checked) return row;
+      // 单号被本地改过时，两种指纹都认：改号之前点过的「已出」不该丢
+      const saved =
+        checkedRef.current[rowKey(row)] ??
+        (local ? checkedRef.current[rowKey(it)] : undefined);
+      return saved === undefined ? row : { ...row, checked: saved };
     });
     setSheet(s);
     setRows(items);
@@ -811,6 +912,7 @@ export default function PackingPage({
     setCloudSheet,
     setCloudSheets,
     sync,
+    openCached,
   } = useCloudSync({
     autoSync,
     onApplied: (sheet) => {
@@ -858,6 +960,9 @@ export default function PackingPage({
         // 读不到设置就当「有更新自动换表」是关的
       }
       if (!alive) return;
+      waybillPatchRef.current = parseWaybillPatch(s[KEY_WAYBILL_PATCH]);
+      setTaskCodes(parseCodeList(s[KEY_TASKS]));
+      setShipTasks(parseTasks(s[KEY_TASK_META]));
       setAutoSync(s[KEY_KDOCS_AUTO_SYNC] === "1");
       // 上面那个「启动时打开上次文件」要是会打开文件，就别用云缓存抢它的位置
       const localFile = s[KEY_AUTO_OPEN] !== "0" && !!s[KEY_LAST_FILE];
@@ -1034,8 +1139,17 @@ export default function PackingPage({
 
   /** 拖进来的文件：图片走系统 OCR，xlsx / csv / txt 直接解析。 */
   useEffect(() => {
-    const path = pendingDrop?.paths?.[0];
-    if (!path) return;
+    const paths = pendingDrop?.paths ?? [];
+    if (paths.length === 0) return;
+    // 导入出货截图的弹窗开着：拖进来的图归它，别当成整张表去解析
+    if (shipOpenRef.current) {
+      const imgs = paths.filter((p) => IMAGE_EXT.test(p));
+      if (imgs.length > 0) {
+        setShipPaths((prev) => [...prev, ...imgs.filter((p) => !prev.includes(p))]);
+        return;
+      }
+    }
+    const path = paths[0];
     const isImage = IMAGE_EXT.test(path);
     let cancelled = false;
     (async () => {
@@ -1074,8 +1188,9 @@ export default function PackingPage({
           .catch(() => {
             // 写失败下次重勾一次就行
           });
-        // 手机端开着就顺手告诉它，省得整表 sync 覆盖手机刚勾的状态
-        if (mobileOpen) {
+        // 手机端服务在跑就顺手告诉它，省得整表 sync 覆盖手机刚勾的状态
+        // （面板收起也算在跑，不能用 mobileOpen 判断）
+        if (mobileInfo) {
           api
             .mobileSetCheck(row.waybill.trim(), row.inbound.trim(), row.name.trim(), p.checked)
             .catch(() => {});
@@ -1083,6 +1198,23 @@ export default function PackingPage({
       }
     }
     setSavedPath(null);
+  };
+
+  /** 改单号：同时记进数据库（`入库号|商品名` → 单号），重新解析 / 重启还能认回来。
+   *  清空这一格就删掉覆盖，回到原表的空单号。 */
+  const setWaybill = (i: number, value: string) => {
+    const before = rowsRef.current[i];
+    patch(i, { waybill: value });
+    if (!before) return;
+    const key = waybillPatchKey(before);
+    const next = { ...waybillPatchRef.current };
+    const v = value.trim();
+    if (v) next[key] = v;
+    else delete next[key];
+    waybillPatchRef.current = next;
+    api.setSetting(KEY_WAYBILL_PATCH, JSON.stringify(next)).catch(() => {
+      // 记不住不影响这次改动
+    });
   };
 
   /** 往剪贴板写文本（WebView 里 clipboard 可能没权限，回退到 textarea） */
@@ -1204,18 +1336,28 @@ export default function PackingPage({
       checked: r.checked,
       issues: r.issues,
       blocked: rowBlocked(r),
+      task: taskSet.has(r.inbound.trim()),
+      taskId: taskIdByWaybill.get(r.waybill.trim() || "未识别单号") ?? "",
+      claimedBy: "",
     }));
 
-  /** 开手机端：起局域网服务，把当前表推进去 */
-  const openMobile = async () => {
-    setError(null);
+  /** 只把手机服务拉起来，不碰面板；silent = 启动时自动开，失败不吵人 */
+  const startMobileService = async (silent = false): Promise<boolean> => {
+    if (mobileInfo) return true;
     try {
       const info = await api.mobileStart(mobilePayload());
       setMobileInfo(info);
-      setMobileOpen(true);
+      return true;
     } catch (e) {
-      setError(errorText(e));
+      if (!silent) setError(errorText(e));
+      return false;
     }
+  };
+
+  /** 点按钮：确保服务在跑，然后把面板拉出来（服务早就起好了也不重启） */
+  const openMobile = async () => {
+    setError(null);
+    if (await startMobileService()) setMobileOpen(true);
   };
 
   const stopMobile = async () => {
@@ -1228,6 +1370,21 @@ export default function PackingPage({
     }
   };
 
+  /** 软件一启动就把手机服务挂起来（面板不弹）；用户点过「停止手机端」就不再自动拉起 */
+  const autoMobileRef = useRef(false);
+  useEffect(() => {
+    if (autoMobileRef.current) return;
+    autoMobileRef.current = true;
+    void startMobileService(true);
+    // 只在挂载时跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 切到别的页签就收起面板（服务继续跑，手机那边不受影响） */
+  useEffect(() => {
+    if (!active) setMobileOpen(false);
+  }, [active]);
+
   const copyMobileUrl = async () => {
     if (!mobileInfo) return;
     try {
@@ -1236,6 +1393,115 @@ export default function PackingPage({
       setTimeout(() => setCopyHint(null), 1800);
     } catch {
       setError("复制失败，直接手输上面的地址");
+    }
+  };
+
+  /** 打开「导入出货截图」弹窗（拖图 / 选图都在里面） */
+  const openShipImages = () => {
+    if (rows.length === 0) {
+      setError("先把表铺出来（同步 / 本地缓存 / 选择文件），再导入出货截图");
+      return;
+    }
+    // 每次打开都是新的一批：别把上次的图和结果留在窗口里
+    setShipPaths([]);
+    setShipResult(null);
+    setShipImagesOpen(true);
+  };
+
+  /** 弹窗里点「选文件」：多选图片，追加到待识别列表 */
+  const pickShipImages = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: true,
+        directory: false,
+        filters: [{ name: "出货截图", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
+      });
+      const list = Array.isArray(picked) ? picked : typeof picked === "string" && picked ? [picked] : [];
+      if (list.length === 0) return;
+      setShipPaths((prev) => [...prev, ...list.filter((p) => !prev.includes(p))]);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+
+  /** 识别这批截图：认入库号 → 匹配当前表 → 打任务；对不上的当场报出来 */
+  const runShipImages = async () => {
+    const list = shipPaths;
+    if (list.length === 0) return;
+    setShipBusy(true);
+    try {
+      const r = await api.parseShipImages(list);
+      const rowsNow = rowsRef.current;
+      const known = new Set(rowsNow.map((x) => x.inbound.trim()));
+      const matched = r.codes.filter((c) => known.has(c));
+      const unknown = r.codes.filter((c) => !known.has(c));
+      // 按单号分组成任务：一个单号一个 task，编号 T1、T2…
+      // 没有单号的行不建任务 —— 手机上是按票领取的，挂到「未识别单号」那一堆里既没法领也容易领错
+      const byWb = new Map<string, { rows: number; boxes: number }>();
+      let noWaybill = 0;
+      for (const code of matched) {
+        const item = rowsNow.find((x) => x.inbound.trim() === code);
+        if (!item) continue;
+        const wb = item.waybill.trim();
+        if (!wb) {
+          noWaybill += 1;
+          continue;
+        }
+        const agg = byWb.get(wb) ?? { rows: 0, boxes: 0 };
+        agg.rows += 1;
+        agg.boxes += item.qty;
+        byWb.set(wb, agg);
+      }
+      const tasks: ShipTask[] = [...byWb.entries()].map(([wb, agg], i) => ({
+        id: `T${i + 1}`,
+        waybill: wb,
+        rows: agg.rows,
+        boxes: agg.boxes,
+      }));
+      setTaskCodes(matched);
+      setShipTasks(tasks);
+      setTaskOnly(true);
+      setShipResult({ total: r.codes.length, matched: matched.length, unknown, failed: r.failed });
+      api.setSetting(KEY_TASKS, JSON.stringify(matched)).catch(() => {});
+      api.setSetting(KEY_TASK_META, JSON.stringify(tasks)).catch(() => {});
+      setScanHint(
+        matched.length > 0
+          ? `本批 ${tasks.length} 个任务 / ${matched.length} 行${
+              noWaybill > 0 ? `（${noWaybill} 行没单号，不生成任务）` : ""
+            }，手机端点「任务」就能领`
+          : "这批图没匹配到任何行，检查一下图里的入库号",
+      );
+      // 认出来了就收窗：结果进表格 + 浮条提示；一行都没匹配上才留着窗口看「原表没有」
+      if (matched.length > 0) {
+        setShipImagesOpen(false);
+        setShipPaths([]);
+      }
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setShipBusy(false);
+    }
+  };
+
+  /** 清掉本次任务，回到看整张表 */
+  const clearTasks = () => {
+    setTaskCodes([]);
+    setShipTasks([]);
+    setTaskOnly(false);
+    api.setSetting(KEY_TASKS, "[]").catch(() => {});
+    api.setSetting(KEY_TASK_META, "[]").catch(() => {});
+  };
+
+  /** 一键放行防火墙：后端弹一次 UAC 跑 netsh，结果既显示在弹窗里，也走右下角浮条 */
+  const allowFirewall = async () => {
+    try {
+      const msg = await api.mobileAllowFirewall();
+      setScanHint(msg);
+      return msg;
+    } catch (e) {
+      const msg = errorText(e);
+      setScanHint(msg);
+      throw new Error(msg);
     }
   };
 
@@ -1255,7 +1521,7 @@ export default function PackingPage({
   /** 表结构变了（换表、改名字/数量）才推给手机；勾选由两边各自轮询 */
   const mobileSig = rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}`).join("~");
   useEffect(() => {
-    if (!mobileOpen) return;
+    if (!mobileInfo) return;
     const timer = setTimeout(() => {
       api.mobileSync(mobilePayload()).catch(() => {});
     }, 300);
@@ -1265,7 +1531,7 @@ export default function PackingPage({
 
   /** 手机勾的变化 → 桌面端落库（和本地勾选走同一个 patch） */
   useEffect(() => {
-    if (!mobileOpen) return;
+    if (!mobileInfo) return;
     let cancelled = false;
     const pull = async () => {
       try {
@@ -1293,7 +1559,7 @@ export default function PackingPage({
   }, [mobileOpen]);
 
   return (
-    <div className="page wide">
+    <div className="page wide packing-page">
       <header className="page-head">
         <div>
           <h1 className="page-title">出货清单</h1>
@@ -1308,6 +1574,15 @@ export default function PackingPage({
           >
             <CloudSyncOutlined />
             {syncing ? "同步中…" : "从云表格同步"}
+          </button>
+          <button
+            className="btn"
+            onClick={() => void openCached()}
+            disabled={busy || syncing}
+            title="不联网：直接解析上次同步下载的 .xls 缓存（测试用，省得每次去云端拉）"
+          >
+            <HistoryOutlined />
+            本地缓存
           </button>
           {cloudSheets.length > 0 && (
             <Select
@@ -1342,6 +1617,29 @@ export default function PackingPage({
             <PieChartOutlined />
             统计
           </button>
+          <button
+            className="btn"
+            onClick={openShipImages}
+            disabled={busy || rows.length === 0}
+            title="选几张「本次要出货」的截图，认出里面的入库号并匹配成任务（手机端只看这批）"
+          >
+            <ImportOutlined />
+            导入出货图
+          </button>
+          {taskCodes.length > 0 && (
+            <button
+              className={`btn${taskOnly ? " primary" : ""}`}
+              onClick={() => setTaskOnly((v) => !v)}
+              title="只看本次任务的行"
+            >
+              只看任务 {taskCodes.length}
+            </button>
+          )}
+          {taskCodes.length > 0 && (
+            <button className="btn" onClick={clearTasks} title="清掉本次任务">
+              清任务
+            </button>
+          )}
           <button className="btn primary" onClick={pickFile} disabled={busy}>
             <FolderOpenOutlined />
             {busy ? "解析中…" : "选择文件"}
@@ -1361,29 +1659,13 @@ export default function PackingPage({
       <div className="card">
         <div className="card-body tight" style={{ padding: "10px 12px" }}>
           <div className="toolbar">
-            <div className="scan-wrap">
-              <label className="scan-box">
-                <ScanOutlined />
-                <input
-                  className="scan-input"
-                  value={scan}
-                  onChange={(e) => setScan(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") locate(scan);
-                    if (e.key === "Escape") setScan("");
-                  }}
-                  placeholder="扫描 / 输入单号，回车定位"
-                  spellCheck={false}
-                />
-              </label>
-            </div>
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="搜索商品 / 客户 / 入库号 / 单号"
               prefix={<SearchOutlined style={{ color: "#9aa3b2" }} />}
               allowClear
-              style={{ width: 180 }}
+              style={{ width: 280 }}
             />
             <Button icon={<ReloadOutlined />} onClick={refreshLast} disabled={busy}>
               刷新
@@ -1696,7 +1978,7 @@ export default function PackingPage({
           )}
 
 {boardMode ? (
-            <Flex gap={12} style={{ height: 560 }}>
+            <Flex gap={12} style={{ flex: 1, minHeight: 0 }}>
               {[
                 { title: "未出", list: pendingRows, tone: "#a67c52" },
                 { title: "已出", list: doneRows, tone: "#4f7d63" },
@@ -1740,16 +2022,26 @@ export default function PackingPage({
           ) : (
             <Table<TableRow>
               size="small"
+              className="packing-table"
               rowKey={(r) => (isFold(r) ? r.__foldKey : String(r.__idx))}
               dataSource={data}
               columns={columns}
               pagination={{
-                pageSize: 50,
+                // 用 defaultPageSize 而不是 pageSize：传 pageSize 等于把它变成受控值，
+                // 没有配套 onChange 时用户选 10/100 条会被立刻按回 50（2026-10-31 用户反馈「选不了」）
+                defaultPageSize: 50,
                 showSizeChanger: true,
-                showTotal: (t) => `共 ${t} 款`,
+                // 合计 / 已出 / 未出 / 差异都并进分页器左侧这一行，
+                // 否则表格下面要再压一行统计，两行挤在一起（2026-10-31 用户反馈）
+                showTotal: (total) =>
+                  `共 ${total} 款 · 已出 ${doneQty} 件 · 未出 ${totalQty - doneQty} 件${
+                    issueRows > 0 ? ` · 差异 ${issueRows} 行` : ""
+                  }`,
                 size: "small",
               }}
-              scroll={{ x: 1100, y: 520 }}
+              // 表体高度交给 CSS flex 撑满（打包成 Tauri 后窗口高度不固定，
+              // 写死 calc 常量会在工具栏换行时算错）。见 styles/packing.css 末尾「一屏布局」
+              scroll={{ x: 1100, y: "100%" }}
               rowClassName={(r) => {
                 if (isFold(r)) return "packing-fold-row";
                 if (rowBlocked(r)) return "packing-row-blocked";
@@ -1764,14 +2056,19 @@ export default function PackingPage({
               }}
             />
           )}
-          <Flex gap={8} style={{ marginTop: 12 }} align="center">
-            <div style={{ flex: 1 }} />
-            <Text type="secondary">
-              已出 {doneQty} 件 · 未出 {totalQty - doneQty} 件
-              {issueRows > 0 ? ` · 差异 ${issueRows} 行` : ""}
-            </Text>
-          </Flex>
         </Card>
+      )}
+
+      {shipImagesOpen && (
+        <ShipImagesModal
+          paths={shipPaths}
+          busy={shipBusy}
+          result={shipResult}
+          onPick={() => void pickShipImages()}
+          onRemove={(p) => setShipPaths((prev) => prev.filter((x) => x !== p))}
+          onRun={() => void runShipImages()}
+          onClose={() => setShipImagesOpen(false)}
+        />
       )}
 
       {mobileOpen && mobileInfo && (
@@ -1780,7 +2077,9 @@ export default function PackingPage({
           onCopy={copyText}
           onCopyUrl={copyMobileUrl}
           onReset={resetMobile}
-          onClose={stopMobile}
+          onAllowFirewall={allowFirewall}
+          onClose={() => setMobileOpen(false)}
+          onStop={stopMobile}
         />
       )}
 
