@@ -1,12 +1,8 @@
 name: iOS 出货助手 IPA
 
 on:
+  # 只手动触发：推代码不会自动跑，省 macOS runner 额度
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "ios-shell/**"
-      - ".github/workflows/ios-ipa.yml"
 
 jobs:
   build:
@@ -48,7 +44,24 @@ jobs:
       - name: pod install（生成 xcworkspace）
         working-directory: ios-shell/src-tauri/gen/apple
         run: |
-          ls -la
+          # Tauri 的 Podfile 模板带一个 macOS target，但纯 iOS 工程没建它，pod install 会直接报错
+          python3 - <<'PY'
+          import re
+          s = open('Podfile').read()
+          out, i = [], 0
+          lines = s.splitlines(True)
+          skip = False
+          for line in lines:
+              if re.match(r"\s*target\s+['\"][^'\"]*_macOS['\"]", line):
+                  skip = True
+              if skip:
+                  if re.match(r"\s*end\s*$", line):
+                      skip = False
+                  continue
+              out.append(line)
+          open('Podfile', 'w').write(''.join(out))
+          print(''.join(out))
+          PY
           pod install
 
       - name: 列出 Xcode 工程 / scheme
