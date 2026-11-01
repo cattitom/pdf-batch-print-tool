@@ -49,6 +49,14 @@
     font-size: 15px; font-weight: 600; padding: 12px 26px;
   }
   button:active { opacity: .8; }
+  #manual { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; max-width: 260px; }
+  #manual input {
+    width: 100%; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06);
+    color: var(--text); font-size: 16px; text-align: center;
+  }
+  #manual input:focus { outline: none; border-color: var(--accent); }
+  #manual button { background: rgba(255,255,255,.14); color: var(--text); }
   .hint { color: var(--dim); font-size: 12px; line-height: 1.7; }
   .hide { display: none !important; }
 </style>
@@ -61,6 +69,10 @@
   <div id="title" class="title">正在找电脑…</div>
   <div id="sub" class="sub">手机和电脑要在同一个 WiFi 下</div>
   <button id="retry" class="hide">重试</button>
+  <div id="manual" class="hide">
+    <input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="电脑 IP，如 192.168.6.125" />
+    <button id="useip">用这个地址找</button>
+  </div>
   <div id="hint" class="hint hide">
     还找不到？<br />① 电脑上的「手机出货」面板开着没<br />② 电脑防火墙放行了没（面板里有按钮）
   </div>
@@ -75,8 +87,14 @@
   var sub = document.getElementById('sub');
   var retry = document.getElementById('retry');
   var hint = document.getElementById('hint');
+  var manual = document.getElementById('manual');
+  var ipInput = document.getElementById('ip');
+  var useIp = document.getElementById('useip');
 
   var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  var HOST_KEY = 'shipping-shell.host';
+  function lastHost() { try { return localStorage.getItem(HOST_KEY) || ''; } catch (e) { return ''; } }
+  function saveHost(h) { try { localStorage.setItem(HOST_KEY, h); } catch (e) {} }
 
   function searching() {
     gate.classList.remove('hide');
@@ -85,6 +103,7 @@
     spinner.classList.remove('hide');
     retry.classList.add('hide');
     hint.classList.add('hide');
+    manual.classList.add('hide');
     title.textContent = '正在找电脑…';
     sub.textContent = '手机和电脑要在同一个 WiFi 下';
   }
@@ -99,6 +118,9 @@
     // 把原生层返回的真实原因摆到界面上（权限被拒 / 广播发不出 / 没人应答），别只打 console
     var detail = msg ? String(msg) : '';
     sub.textContent = detail && detail !== '没找到电脑' ? detail : '检查是否同一 WiFi 后，点下面重试';
+    // 广播被系统或路由器拦掉时，手动填电脑 IP 走单播（单播通常还能通）
+    if (ipInput && !ipInput.value) ipInput.value = lastHost();
+    manual.classList.remove('hide');
   }
 
   function connect() {
@@ -109,6 +131,7 @@
     searching();
     invoke('discover_peer').then(function (peer) {
       if (!peer || !peer.url) { failed('电脑没回地址'); return; }
+      saveHost(peer.host);
       view.onload = function () { gate.classList.add('hide'); };
       view.src = peer.url;
       view.style.display = 'block';
@@ -119,7 +142,29 @@
     });
   }
 
+  function connectTo(host) {
+    if (!invoke) {
+      failed('当前不在 App 里运行（没有 Tauri 接口）');
+      return;
+    }
+    host = String(host || '').trim();
+    if (!host) { failed('先填电脑的 IP'); return; }
+    searching();
+    invoke('discover_at', { host: host }).then(function (peer) {
+      if (!peer || !peer.url) { failed('电脑没回地址'); return; }
+      saveHost(peer.host);
+      view.onload = function () { gate.classList.add('hide'); };
+      view.src = peer.url;
+      view.style.display = 'block';
+      setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1500);
+    }).catch(function (e) { failed(String(e)); });
+  }
+
   retry.addEventListener('click', connect);
+  useIp.addEventListener('click', function () { connectTo(ipInput.value); });
+  ipInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') connectTo(ipInput.value);
+  });
   document.addEventListener('visibilitychange', function () {
     // 从后台切回来、还没连上就再找一次
     if (!document.hidden && !view.src) connect();

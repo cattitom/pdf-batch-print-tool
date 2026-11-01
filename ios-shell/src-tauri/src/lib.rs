@@ -2,7 +2,7 @@
 //! 没有后端逻辑，手机打开后连的是电脑上跑着的局域网服务。
 //!
 //! iOS 打包交给 CI（.github/workflows/ios-ipa.yml），这里只保留最小入口
-//! 和一条 UDP 发现命令（省掉扫码/填地址）。
+//! 和 UDP 发现命令（省掉扫码/填地址）。
 
 use std::{net::UdpSocket, time::Duration};
 
@@ -52,6 +52,26 @@ fn broadcast_targets() -> Vec<std::net::SocketAddr> {
     targets
 }
 
+/// 本机的 IPv4 列表（给错误提示用：一眼看出手机到底在哪个网段）
+fn local_ipv4_summary() -> String {
+    let mut list = Vec::new();
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        for itf in ifaces {
+            if itf.is_loopback() {
+                continue;
+            }
+            if let if_addrs::IfAddr::V4(v4) = itf.addr {
+                list.push(format!("{}/{}", v4.ip, v4.prefixlen));
+            }
+        }
+    }
+    if list.is_empty() {
+        "无".to_string()
+    } else {
+        list.join("、")
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Peer {
@@ -69,7 +89,30 @@ struct Reply {
     token: String,
 }
 
-/// 往局域网广播暗号，等电脑回 {port, token}。找不到就报错，前端显示「检查是否同一 WiFi」。
+fn make_peer(reply: &Reply, from: std::net::SocketAddr) -> Option<Peer> {
+    if reply.port == 0 || reply.token.is_empty() {
+        return None;
+    }
+    let host = from.ip().to_string();
+    let base = format!("http://{host}:{}", reply.port);
+    let token = reply.token.clone();
+    Some(Peer {
+        url: format!("{base}/?t={token}"),
+        host,
+        port: reply.port,
+        token,
+    })
+}
+
+fn decode(buf: &[u8], from: std::net::SocketAddr) -> Result<Option<Peer>, String> {
+    let text = String::from_utf8_lossy(buf).to_string();
+    match serde_json::from_str::<Reply>(&text) {
+        Ok(reply) => Ok(make_peer(&reply, from)),
+        Err(e) => Err(format!("电脑的应答看不懂（{e}）：{text}")),
+    }
+}
+
+/// 往局域网广播暗号，等电脑回 {port, token}。找不到就报错，前端显示原因。
 fn discover_blocking() -> Result<Peer, String> {
     let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| format!("建 UDP socket 失败：{e}"))?;
     sock.set_broadcast(true)
@@ -92,34 +135,64 @@ fn discover_blocking() -> Result<Peer, String> {
             }
         }
         match sock.recv_from(&mut buf) {
-            Ok((n, from)) => {
-                let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                let reply: Reply = serde_json::from_str(&text)
-                    .map_err(|e| format!("电脑的应答看不懂（{e}）：{text}"))?;
-                if reply.port == 0 || reply.token.is_empty() {
-                    continue;
-                }
-                let host = from.ip().to_string();
-                let url = format!("http://{host}:{}", reply.port);
-                return Ok(Peer {
-                    url: format!("{url}/?t={}", reply.token),
-                    host,
-                    port: reply.port,
-                    token: reply.token,
-                });
-            }
+            Ok((n, from)) => match decode(&buf[..n], from)? {
+                Some(peer) => return Ok(peer),
+                None => continue,
+            },
             Err(_) => continue,
         }
     }
     if sent == 0 {
         return Err(format!(
-            "广播发不出去（试了 {} 个地址）：{}。iOS 上多半是「本地网络」权限被拒，去 设置 → 出货助手 → 本地网络 打开后重试",
+            "广播发不出去（试了 {} 个地址）：{}。本机 IP：{}",
             targets.len(),
-            last_send_err.unwrap_or_else(|| "未知错误".into())
+            last_send_err.unwrap_or_else(|| "未知错误".into()),
+            local_ipv4_summary()
         ));
     }
     Err(format!(
-        "没找到电脑（广播了 {sent} 次，电脑没应答；确认手机和电脑同一个 WiFi）"
+        "没找到电脑（广播了 {sent} 次，电脑没应答；本机 IP：{}）",
+        local_ipv4_summary()
+    ))
+}
+
+/// 直接朝指定地址发暗号（广播被系统/路由器拦掉时的兜底，走单播）。
+fn discover_host(host: &str) -> Result<Peer, String> {
+    let host = host.trim();
+    let target: std::net::SocketAddr = if host.contains(':') {
+        host.parse()
+            .map_err(|_| format!("地址看不懂：{host}（该填 192.168.6.125 这种）"))?
+    } else {
+        format!("{host}:{DISCOVER_PORT}")
+            .parse()
+            .map_err(|_| format!("地址看不懂：{host}（该填 192.168.6.125 这种）"))?
+    };
+
+    let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| format!("建 UDP socket 失败：{e}"))?;
+    sock.set_read_timeout(Some(WAIT))
+        .map_err(|e| format!("设超时失败：{e}"))?;
+
+    let mut buf = [0u8; 1024];
+    let mut last_err = String::new();
+    for _ in 0..ROUNDS {
+        if let Err(e) = sock.send_to(DISCOVER_MAGIC, target) {
+            last_err = e.to_string();
+        }
+        match sock.recv_from(&mut buf) {
+            Ok((n, from)) => match decode(&buf[..n], from)? {
+                Some(peer) => return Ok(peer),
+                None => continue,
+            },
+            Err(_) => continue,
+        }
+    }
+    Err(format!(
+        "连不上 {target}：{}（电脑上的「手机出货」面板要开着）",
+        if last_err.is_empty() {
+            "没人应答".to_string()
+        } else {
+            last_err
+        }
     ))
 }
 
@@ -130,10 +203,17 @@ async fn discover_peer() -> Result<Peer, String> {
         .map_err(|e| format!("发现任务崩了：{e}"))?
 }
 
+#[tauri::command]
+async fn discover_at(host: String) -> Result<Peer, String> {
+    tauri::async_runtime::spawn_blocking(move || discover_host(&host))
+        .await
+        .map_err(|e| format!("发现任务崩了：{e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![discover_peer])
+        .invoke_handler(tauri::generate_handler![discover_peer, discover_at])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
