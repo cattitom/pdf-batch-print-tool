@@ -39,6 +39,19 @@ jobs:
         working-directory: ios-shell/src-tauri
         run: tauri ios init --ci
 
+      - name: 补 tauri 脚本（Xcode 的 Build Rust Code 相位跑的是 node tauri）
+        run: |
+          CLI=$(readlink -f "$(which tauri)")
+          echo "CLI=$CLI"
+          cat > ios-shell/src-tauri/gen/apple/tauri <<EOF
+          #!/usr/bin/env node
+          const { spawnSync } = require('child_process');
+          const r = spawnSync(process.execPath, ['$CLI', ...process.argv.slice(2)], { stdio: 'inherit' });
+          process.exit(r.status === null ? 1 : r.status);
+          EOF
+          chmod +x ios-shell/src-tauri/gen/apple/tauri
+          node ios-shell/src-tauri/gen/apple/tauri --version
+
       - name: 打印 iOS 工程（排查用）
         run: |
           ls -la ios-shell/src-tauri/gen/apple | head -40
