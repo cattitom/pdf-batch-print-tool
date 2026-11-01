@@ -86,6 +86,8 @@ jobs:
           # schemes[0] 往往是 'Pods-xxx' 聚合 scheme，编它不会产出 .app；要挑真正的 app scheme
           SCHEME=$(python3 -c "import json;s=json.load(open('/tmp/list.json'))['workspace']['schemes'];print(next((x for x in s if not x.startswith('Pods-')), s[0]))")
           echo "scheme=$SCHEME"
+          # 外层是 bash -e，xcodebuild 一失败就整个退出、日志全丢，先关掉
+          set +e
           xcodebuild \
             -workspace "$WS" \
             -scheme "$SCHEME" \
@@ -100,9 +102,12 @@ jobs:
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             build > /tmp/xcodebuild.log 2>&1
           RC=$?
+          set -e
           grep -E "error:|\*\* BUILD" /tmp/xcodebuild.log | tail -40 || true
           if [ $RC -ne 0 ]; then
-            echo "::error::xcodebuild 失败（exit $RC），日志尾部："
+            echo "::error::xcodebuild 失败（exit $RC），日志前 40 行："
+            head -40 /tmp/xcodebuild.log
+            echo "::error::……日志尾部："
             tail -120 /tmp/xcodebuild.log
             exit $RC
           fi
