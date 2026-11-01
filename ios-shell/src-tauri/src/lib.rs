@@ -8,6 +8,9 @@ use std::{net::UdpSocket, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "ios")]
+mod bonjour;
+
 /// 和电脑端 `mobile::DISCOVER_PORT` 保持一致
 const DISCOVER_PORT: u16 = 17655;
 const DISCOVER_MAGIC: &[u8] = b"PDF-MOBILE-DISCOVER";
@@ -198,9 +201,38 @@ fn discover_host(host: &str) -> Result<Peer, String> {
 
 #[tauri::command]
 async fn discover_peer() -> Result<Peer, String> {
-    tauri::async_runtime::spawn_blocking(discover_blocking)
-        .await
-        .map_err(|e| format!("发现任务崩了：{e}"))?
+    tauri::async_runtime::spawn_blocking(|| {
+        // iOS 上广播会被系统拦，先走系统的 Bonjour（mDNSResponder 代发组播）
+        #[allow(unused_mut)]
+        let mut bonjour_err = String::new();
+        #[cfg(target_os = "ios")]
+        {
+            match bonjour::discover(Duration::from_secs(3)) {
+                Ok((host, port, token)) => {
+                    let base = format!("http://{host}:{port}");
+                    return Ok(Peer {
+                        url: format!("{base}/?t={token}"),
+                        host,
+                        port,
+                        token,
+                    });
+                }
+                Err(e) => bonjour_err = e,
+            }
+        }
+        match discover_blocking() {
+            Ok(peer) => Ok(peer),
+            Err(e) => {
+                if bonjour_err.is_empty() {
+                    Err(e)
+                } else {
+                    Err(format!("Bonjour：{bonjour_err}；广播：{e}"))
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("发现任务崩了：{e}"))?
 }
 
 #[tauri::command]

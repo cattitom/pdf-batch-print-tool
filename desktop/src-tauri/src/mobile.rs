@@ -24,6 +24,13 @@ pub const DISCOVER_PORT: u16 = 17655;
 /// App 广播的固定暗号，收到别的 UDP 包一律不理。
 const DISCOVER_MAGIC: &[u8] = b"PDF-MOBILE-DISCOVER";
 
+/// mDNS 服务类型（和手机端 ios-shell 的 bonjour.rs 的 REGTYPE 一致）。
+/// iOS 上系统不允许 App 自己发广播/组播，但 Bonjour 由 mDNSResponder 代发，能用。
+const MDNS_SERVICE_TYPE: &str = "_shippingshell._tcp.local.";
+
+/// 当前注册的 mDNS 服务：(守护进程, 服务全名)
+static MDNS: Mutex<Option<(mdns_sd::ServiceDaemon, String)>> = Mutex::new(None);
+
 const PAGE: &str = include_str!("../mobile/index.html");
 const CSS: &str = include_str!("../mobile/m.css");
 const JS: &str = include_str!("../mobile/m.js");
@@ -253,6 +260,80 @@ fn start_discovery(shared: &MobileShared, stop: Arc<AtomicBool>) {
     });
 }
 
+/// 把手机服务的地址 + token 广播到 mDNS，手机 App 用 Bonjour 就能零配置找到。
+/// 每次开服务都重新注册（换 Wi-Fi 后 IP 会变），旧的先注销。
+fn start_mdns(info: &MobileInfo) {
+    let ip = info
+        .urls
+        .first()
+        .and_then(|u| u.strip_prefix("http://"))
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let host = mdns_host_name();
+    let token = info.token.clone();
+
+    let daemon = match mdns_sd::ServiceDaemon::new() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("mDNS 启动失败：{e}");
+            return;
+        }
+    };
+    let service = match mdns_sd::ServiceInfo::new(
+        MDNS_SERVICE_TYPE,
+        "shipping-helper",
+        &host,
+        ip.as_str(),
+        info.port,
+        &[("token", token.as_str())][..],
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("mDNS 服务信息构造失败：{e}");
+            return;
+        }
+    };
+    let fullname = service.get_fullname().to_string();
+    if let Err(e) = daemon.register(service) {
+        log::warn!("mDNS 注册失败：{e}");
+        return;
+    }
+    log::info!("mDNS 已广播：{fullname}（{ip}:{}）", info.port);
+
+    if let Ok(mut slot) = MDNS.lock() {
+        if let Some((old, _)) = slot.take() {
+            let _ = old.shutdown();
+        }
+        *slot = Some((daemon, fullname));
+    }
+}
+
+fn stop_mdns() {
+    if let Ok(mut slot) = MDNS.lock() {
+        if let Some((daemon, fullname)) = slot.take() {
+            let _ = daemon.unregister(&fullname);
+            let _ = daemon.shutdown();
+        }
+    }
+}
+
+/// mDNS 要求合法主机名：机器名里非 ASCII/连字符的字符去掉，兜底一个固定名
+fn mdns_host_name() -> String {
+    let label = std::env::var("COMPUTERNAME")
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect::<String>()
+        .to_lowercase();
+    let label = if label.is_empty() {
+        "shipping-helper".to_string()
+    } else {
+        label
+    };
+    format!("{label}.local.")
+}
+
 fn qr_svg(url: &str) -> String {
     match qrcode::QrCode::new(url.as_bytes()) {
         Ok(code) => code
@@ -276,6 +357,7 @@ pub fn start(
         // 换过 Wi-Fi / 开了 VPN 之后地址会变，重开弹窗时重新挑一次
         let info = build_info(old.port, old.token);
         inner.info = Some(info.clone());
+        start_mdns(&info);
         return Ok(info);
     }
 
@@ -288,6 +370,7 @@ pub fn start(
     inner.info = Some(info.clone());
 
     start_discovery(shared, stop.clone());
+    start_mdns(&info);
 
     let shared_for_thread = shared.clone();
     thread::spawn(move || {
@@ -346,6 +429,7 @@ pub fn info(shared: &MobileShared) -> Option<MobileInfo> {
 }
 
 pub fn stop(shared: &MobileShared) {
+    stop_mdns();
     if let Ok(mut inner) = shared.inner.lock() {
         if let Some(flag) = inner.stop.take() {
             flag.store(true, Ordering::Relaxed);

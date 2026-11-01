@@ -34,6 +34,7 @@ tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # 枚举网卡挑局域网 IP（跳过 VPN / 虚拟网卡）
 local-ip-address = "0.6"
+mdns-sd = "0.21.6"
 
 # 查找 WPS 安装路径（读取注册表）
 [target.'cfg(windows)'.dependencies]
