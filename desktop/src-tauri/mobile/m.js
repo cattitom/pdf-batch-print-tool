@@ -11,6 +11,7 @@
   var cur = "";
   var filter = "all";
   var q = "";
+  var docQ = "";
   var saving = {};
   var pollTimer = null;
 
@@ -26,6 +27,7 @@
   var $left = $("leftQty");
   var $sync = $("sync");
   var $q = $("q");
+  var $dq = $("dq");
   var $seg = $("seg");
   var $docNo = $("docNo");
   var $docSub = $("docSub");
@@ -278,6 +280,15 @@
     });
   }
 
+  function docMatch(r) {
+    if (!docQ) return true;
+    return [r.waybill, r.inbound, r.name, r.customer]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .indexOf(docQ) >= 0;
+  }
+
   function updateDocNumbers() {
     var list = docRows();
     var s = stats(list);
@@ -307,7 +318,11 @@
     });
     $docNo.textContent = cur;
     $docSub.textContent = (custs.join(" / ") || "—") + " · " + s.n + " 行";
-    $lines.innerHTML = list.map(lineHtml).join("");
+    // 单据页也能搜：只影响显示的行，统计还是整张单
+    var shown = list.filter(docMatch);
+    $lines.innerHTML = shown.length
+      ? shown.map(lineHtml).join("")
+      : '<p style="margin:24px 0;text-align:center;color:var(--muted);font-size:13px">没有匹配的货</p>';
     updateDocNumbers();
   }
 
@@ -325,6 +340,9 @@
     $viewList.classList.add("hidden");
     $viewDoc.classList.remove("hidden");
     window.scrollTo(0, 0);
+    $lines.scrollTop = 0;
+    $dq.value = "";
+    docQ = "";
     renderDoc();
   }
 
@@ -532,6 +550,11 @@
   });
 
   var qTimer = null;
+  $dq.addEventListener("input", function () {
+    docQ = $dq.value.trim().toLowerCase();
+    renderDoc();
+  });
+
   $q.addEventListener("input", function () {
     clearTimeout(qTimer);
     qTimer = setTimeout(function () {
