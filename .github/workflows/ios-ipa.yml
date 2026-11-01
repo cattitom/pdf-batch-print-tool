@@ -107,58 +107,30 @@ jobs:
           xcodebuild -list -workspace "$WS" -json | tee /tmp/list.json
 
       - name: 编译（不签名）
-        working-directory: ios-shell/src-tauri/gen/apple
+        working-directory: ios-shell/src-tauri
         run: |
-          set -uo pipefail
-          python3 -c "import json;print('schemes=', ' '.join(json.load(open('/tmp/list.json'))['workspace']['schemes']))"
-          # schemes[0] 往往是 'Pods-xxx' 聚合 scheme，编它不会产出 .app；要挑真正的 app scheme
-          SCHEME=$(python3 -c "import json;s=json.load(open('/tmp/list.json'))['workspace']['schemes'];print(next((x for x in s if not x.startswith('Pods-')), s[0]))")
-          echo "scheme=$SCHEME"
-          # 外层是 bash -e，xcodebuild 一失败就整个退出、日志全丢，先关掉
           set +e
-          xcodebuild \
-            -workspace "$WS" \
-            -scheme "$SCHEME" \
-            -configuration debug \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+          # 不能直接 xcodebuild：Build Rust Code 相位要读 gen/apple/.tauri/cli-options-server.json，
+          # 那个文件只有 tauri ios build / tauri ios dev 在跑的时候才会写。
+          tauri ios build --debug --ci --target aarch64 -- \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
-            ARCHS=arm64 \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
-            build > /tmp/xcodebuild.log 2>&1
+            > /tmp/xcodebuild.log 2>&1
           RC=$?
           set -e
-          echo "xcodebuild exit=${RC}, log lines=$(wc -l < /tmp/xcodebuild.log)"
-          grep -Ei "error" /tmp/xcodebuild.log | tail -40 || true
+          echo "tauri ios build exit=${RC}, log lines=$(wc -l < /tmp/xcodebuild.log)"
+          grep -Ei "error|failed" /tmp/xcodebuild.log | tail -40 || true
           if [ "${RC}" -ne 0 ]; then
-            echo "----- log head (60) -----"
-            head -60 /tmp/xcodebuild.log
-            echo "----- log tail (120) -----"
-            tail -120 /tmp/xcodebuild.log
+            echo "----- log head (40) -----"
+            head -40 /tmp/xcodebuild.log
+            echo "----- log tail (150) -----"
+            tail -150 /tmp/xcodebuild.log
             exit "${RC}"
           fi
           echo "--- 找得到的 .app ---"
-          find . -name "*.app" -type d | head -20
-          # 工程 xcconfig 可能覆盖 SYMROOT，直接问 xcodebuild 要真实产物路径
-          xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration debug -sdk iphoneos \
-            -derivedDataPath build -showBuildSettings -json > /tmp/settings.json 2>/dev/null || true
-          python3 - <<'PY' >> "$GITHUB_ENV"
-          import json, os
-          try:
-              d = json.load(open('/tmp/settings.json'))
-          except Exception as e:
-              print('# showBuildSettings 解析失败: %s' % e)
-              raise SystemExit(0)
-          for item in (d if isinstance(d, list) else [d]):
-              bs = item.get('buildSettings', {})
-              name = bs.get('FULL_PRODUCT_NAME', '')
-              if name.endswith('.app'):
-                  print('APP_PATH=' + os.path.join(bs.get('TARGET_BUILD_DIR', ''), name))
-                  break
-          PY
+          find . -name "*.app" -type d -not -path "*/Pods/*" | head -20
 
       - name: 上传编译日志
         if: always()
