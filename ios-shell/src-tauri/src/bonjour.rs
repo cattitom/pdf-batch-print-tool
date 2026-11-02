@@ -61,6 +61,7 @@ enum Msg {
         host: String,
         port: u16,
         token: String,
+        name: String,
     },
 }
 
@@ -110,17 +111,21 @@ extern "C" fn on_resolved(
         return;
     }
     let tx = unsafe { &*(ctx as *const mpsc::Sender<Msg>) };
+    let (token, name) = parse_txt(txt, txt_len);
     let _ = tx.send(Msg::Resolved {
         host: cstr(host).trim_end_matches('.').to_string(),
         port: u16::from_be(port),
-        token: parse_txt(txt, txt_len).unwrap_or_default(),
+        token,
+        name,
     });
 }
 
-/// TXT 记录是一串 [长度][key=value]，挑出 token
-fn parse_txt(txt: *const u8, len: u16) -> Option<String> {
+/// TXT 记录是一串 [长度][key=value]，挑出 token 和电脑名
+fn parse_txt(txt: *const u8, len: u16) -> (String, String) {
+    let mut token = String::new();
+    let mut name = String::new();
     if txt.is_null() || len == 0 {
-        return None;
+        return (token, name);
     }
     let bytes = unsafe { std::slice::from_raw_parts(txt, len as usize) };
     let mut i = 0usize;
@@ -133,10 +138,12 @@ fn parse_txt(txt: *const u8, len: u16) -> Option<String> {
         let text = String::from_utf8_lossy(&bytes[i..i + size]).to_string();
         i += size;
         if let Some(v) = text.strip_prefix("token=") {
-            return Some(v.to_string());
+            token = v.to_string();
+        } else if let Some(v) = text.strip_prefix("name=") {
+            name = v.to_string();
         }
     }
-    None
+    (token, name)
 }
 
 /// 等 sd_ref 上的事件最多 budget 时间（回调里把结果推进 channel）
@@ -161,8 +168,8 @@ fn pump(sd: SdRef, budget: Duration) {
     }
 }
 
-/// 找到电脑就返回 (ip, port, token)
-pub fn discover(timeout: Duration) -> Result<(String, u16, String), String> {
+/// 找到电脑就返回 (ip, port, token, 电脑名)
+pub fn discover(timeout: Duration) -> Result<(String, u16, String, String), String> {
     let deadline = Instant::now() + timeout;
 
     // 1) 浏览服务
@@ -237,8 +244,14 @@ pub fn discover(timeout: Duration) -> Result<(String, u16, String), String> {
     while resolved.is_none() && Instant::now() < deadline {
         pump(resolve, Duration::from_millis(300));
         while let Ok(msg) = rx2.try_recv() {
-            if let Msg::Resolved { host, port, token } = msg {
-                resolved = Some((host, port, token));
+            if let Msg::Resolved {
+                host,
+                port,
+                token,
+                name,
+            } = msg
+            {
+                resolved = Some((host, port, token, name));
                 break;
             }
         }
@@ -247,7 +260,8 @@ pub fn discover(timeout: Duration) -> Result<(String, u16, String), String> {
         DNSServiceRefDeallocate(resolve);
         drop(Box::from_raw(ctx2));
     }
-    let (host, port, token) = resolved.ok_or_else(|| "Bonjour 找到了服务，解析地址超时".to_string())?;
+    let (host, port, token, name) =
+        resolved.ok_or_else(|| "Bonjour 找到了服务，解析地址超时".to_string())?;
     if token.is_empty() {
         return Err("Bonjour 的 TXT 里没有 token".to_string());
     }
@@ -259,5 +273,5 @@ pub fn discover(timeout: Duration) -> Result<(String, u16, String), String> {
         .find(|a| a.is_ipv4())
         .ok_or_else(|| format!("{host} 没有 IPv4 地址"))?;
 
-    Ok((addr.ip().to_string(), port, token))
+    Ok((addr.ip().to_string(), port, token, name))
 }

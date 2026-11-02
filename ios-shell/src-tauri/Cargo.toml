@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# 扫码：原生 AVFoundation（WKWebView 的 getUserMedia 在真机上不稳）
+tauri-plugin-barcode-scanner = "2"
 # 只为了解 UDP 发现应答里的 {port, token}
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

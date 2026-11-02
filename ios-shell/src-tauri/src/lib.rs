@@ -82,6 +82,9 @@ pub struct Peer {
     pub host: String,
     pub port: u16,
     pub token: String,
+    /// 电脑名（电脑端 TXT/应答里带，老版本电脑没有就是空）
+    #[serde(default)]
+    pub name: String,
     /// 已经拼好口令，前端直接塞 iframe 就行
     pub url: String,
 }
@@ -90,6 +93,8 @@ pub struct Peer {
 struct Reply {
     port: u16,
     token: String,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 fn make_peer(reply: &Reply, from: std::net::SocketAddr) -> Option<Peer> {
@@ -104,6 +109,7 @@ fn make_peer(reply: &Reply, from: std::net::SocketAddr) -> Option<Peer> {
         host,
         port: reply.port,
         token,
+        name: reply.name.clone().unwrap_or_default(),
     })
 }
 
@@ -208,13 +214,14 @@ async fn discover_peer() -> Result<Peer, String> {
         #[cfg(target_os = "ios")]
         {
             match bonjour::discover(Duration::from_secs(3)) {
-                Ok((host, port, token)) => {
+                Ok((host, port, token, name)) => {
                     let base = format!("http://{host}:{port}");
                     return Ok(Peer {
                         url: format!("{base}/?t={token}"),
                         host,
                         port,
                         token,
+                        name,
                     });
                 }
                 Err(e) => bonjour_err = e,
@@ -244,7 +251,14 @@ async fn discover_at(host: String) -> Result<Peer, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // 扫码插件是 mobile-only 的 crate（桌面编译出来是空壳，没有 init）
+    #[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    }
+    builder
         .invoke_handler(tauri::generate_handler![discover_peer, discover_at])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

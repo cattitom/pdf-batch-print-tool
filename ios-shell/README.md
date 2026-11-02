@@ -10,18 +10,27 @@
 
 ## 自动发现怎么工作
 
-不用扫码、不用填地址：
+打开 App 先找电脑，找到了不直接跳，先问一句要不要连：
 
-1. 电脑端（`desktop/src-tauri/src/mobile.rs`）在开手机服务时，顺手起一个 **UDP 监听 17655**；
-2. App 启动时往 `255.255.255.255:17655` 广播暗号 `PDF-MOBILE-DISCOVER`，最多试 6 轮（约 3 秒）；
-3. 电脑回 `{port, token}`，App 用回包的源 IP 拼出地址，直接加载；
-4. 找不到就显示「没找到电脑，检查是否同一 WiFi」，点重试再来一次。
+1. **Bonjour 优先**：电脑端（`desktop/src-tauri/src/mobile.rs`）开手机服务时注册 `_shippingshell._tcp`，
+   TXT 里带 `token` 和电脑名；App 用系统 `DNSServiceBrowse` 找（mDNSResponder 代发组播，
+   绕开 iOS 对 App 自己广播的限制）。
+2. **广播兜底**：没走通就发 UDP 暗号 `PDF-MOBILE-DISCOVER` 到 `255.255.255.255:17655`（6 轮 ≈ 3 秒），
+   电脑回 `{port, token, name}`，用回包源 IP 拼地址。
+3. **找到了**：显示「发现电脑 · 电脑名 IP」，带一个 **「下次直接连接，不再询问」开关**；
+   勾上再点连接就把这台记到本地，以后启动发现到它就直接连，不再弹卡片。
+4. **没找到**：进「没找到电脑」页 —— 主按钮是 **扫二维码**（原生相机，扫电脑面板上的二维码），
+   下面是 **最近连过**（最多 5 台，点一下用单播重新问口令再连）和手填 IP 兜底。
 
-两个前提：
+历史记录只存在手机本地（`localStorage`），记 IP / 电脑名 / 最后连接时间 / 上次的整条链接；
+连接时优先重新问一次口令，换过口令也不会拿着旧 token 打不开。
+
+前提：
 
 - 手机和电脑在同一局域网（同一 WiFi / 电脑热点）；
-- 电脑防火墙放行（面板里的「一键放行」现在会把 **TCP 17650-17655 + UDP** 一起放行）；
-- iOS 首次广播会弹「本地网络」权限，必须点允许（`Info.plist` 里的 `NSLocalNetworkUsageDescription`，CI 自动注入）。
+- 电脑防火墙放行（面板里的「一键放行」会把 **TCP 17650-17655 + UDP** 一起放行）；
+- iOS 首次会弹「本地网络」和「相机」权限，都要允许（`Info.plist` 的 `NSLocalNetworkUsageDescription`
+  / `NSCameraUsageDescription` / `NSBonjourServices` 由 CI 注入）。
 
 ## 出 IPA（不需要 Mac）
 

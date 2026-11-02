@@ -86,6 +86,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || true
           # iOS 14+ 往局域网广播要这条说明，否则 UDP 发现会被静默拦掉
           /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 在局域网里找到电脑上的出货服务" "$PLIST" || true
+          # 扫码连接要用相机
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 扫描电脑上的二维码来连接出货服务" "$PLIST" || true
+          # Bonjour（DNSServiceBrowse）必须声明服务类型，否则 iOS 14+ 直接拒掉浏览
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _shippingshell._tcp" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Print" "$PLIST" | head -40 || true
 
       - name: pod install（生成 xcworkspace）

@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "发现电脑、扫码、加载出货页",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "barcode-scanner:default"
+  ]
+}

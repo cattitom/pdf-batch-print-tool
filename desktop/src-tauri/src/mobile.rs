@@ -249,6 +249,7 @@ fn start_discovery(shared: &MobileShared, stop: Arc<AtomicBool>) {
             if let Some(info) = info {
                 let payload = json!({
                     "app": "pdf-mobile",
+                    "name": display_name(),
                     "port": info.port,
                     "token": info.token,
                     "urls": info.urls,
@@ -272,6 +273,7 @@ fn start_mdns(info: &MobileInfo) {
         .to_string();
     let host = mdns_host_name();
     let token = info.token.clone();
+    let display = display_name();
 
     let daemon = match mdns_sd::ServiceDaemon::new() {
         Ok(d) => d,
@@ -286,7 +288,7 @@ fn start_mdns(info: &MobileInfo) {
         &host,
         ip.as_str(),
         info.port,
-        &[("token", token.as_str())][..],
+        &[("token", token.as_str()), ("name", display.as_str())][..],
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -315,6 +317,17 @@ fn stop_mdns() {
             let _ = daemon.unregister(&fullname);
             let _ = daemon.shutdown();
         }
+    }
+}
+
+/// 给人看的电脑名：手机 App 的「发现电脑」卡片用它，别只显示 IP
+fn display_name() -> String {
+    let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let name = name.trim();
+    if name.is_empty() {
+        "电脑".to_string()
+    } else {
+        name.to_string()
     }
 }
 

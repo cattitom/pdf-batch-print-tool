@@ -25,9 +25,14 @@
   }
   #gate {
     position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 18px;
-    padding: max(24px, env(safe-area-inset-top)) 28px max(24px, env(safe-area-inset-bottom));
+    align-items: center; justify-content: flex-start; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: max(20px, env(safe-area-inset-top)) 24px max(20px, env(safe-area-inset-bottom));
     text-align: center;
+  }
+  .panel {
+    width: 100%; max-width: 340px; margin: auto 0;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
   }
   .spin {
     width: 34px; height: 34px; border-radius: 50%;
@@ -37,19 +42,79 @@
   @keyframes turn { to { transform: rotate(360deg); } }
   .title { font-size: 17px; font-weight: 600; letter-spacing: .3px; }
   .sub { color: var(--dim); font-size: 13px; max-width: 300px; overflow-wrap: anywhere; }
-  .icon-bad {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: rgba(255,107,107,.14); color: var(--danger);
+  .icon-ok, .icon-bad {
+    width: 44px; height: 44px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-size: 22px; font-weight: 700;
   }
+  .icon-ok { background: rgba(53,196,138,.16); color: var(--accent); }
+  .icon-bad { background: rgba(255,107,107,.14); color: var(--danger); }
   button {
     appearance: none; border: 0; border-radius: 12px;
     background: var(--accent); color: #06231a;
     font-size: 15px; font-weight: 600; padding: 12px 26px;
+    width: 100%;
   }
   button:active { opacity: .8; }
-  #manual { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; max-width: 260px; }
+  button.ghost {
+    background: rgba(255,255,255,.10); color: var(--text); font-weight: 500;
+  }
+  .switch-row {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(255,255,255,.06); color: var(--dim); font-size: 13px;
+    text-align: left;
+  }
+  .switch-row input {
+    appearance: none; -webkit-appearance: none; flex: none;
+    width: 44px; height: 26px; border-radius: 13px; margin: 0;
+    background: rgba(255,255,255,.18); position: relative; transition: background .2s;
+  }
+  .switch-row input:checked { background: var(--accent); }
+  .switch-row input::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 20px; height: 20px; border-radius: 50%; background: #fff;
+    transition: transform .2s;
+  }
+  .switch-row input:checked::after { transform: translateX(18px); }
+  #err {
+    width: 100%; max-height: 76px; overflow-y: auto; text-align: left;
+    font-size: 13px; line-height: 1.6; color: var(--dim);
+    background: rgba(255,255,255,.04); border-radius: 8px; padding: 8px 10px;
+    overflow-wrap: anywhere;
+  }
+  .list-head {
+    width: 100%; display: flex; align-items: baseline; justify-content: space-between;
+    margin-top: 6px; color: var(--dim); font-size: 12px;
+  }
+  .list-head button {
+    width: auto; padding: 0; background: none; color: var(--dim);
+    font-size: 12px; font-weight: 400; text-decoration: underline;
+  }
+  #history { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .hist {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    background: var(--card); color: var(--text); text-align: left;
+    padding: 10px 12px; border-radius: 10px; font-weight: 400;
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  .hist-name { font-size: 14px; font-weight: 600; }
+  .hist-meta { font-size: 12px; color: var(--dim); }
+  #auto-note {
+    width: 100%; font-size: 12px; color: var(--dim);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  #auto-note button {
+    width: auto; padding: 0; background: none; color: var(--accent);
+    font-size: 12px; font-weight: 500; text-decoration: underline;
+  }
+  details {
+    width: 100%; text-align: left; color: var(--dim); font-size: 13px;
+    background: rgba(255,255,255,.04); border-radius: 10px; padding: 8px 12px;
+  }
+  summary { cursor: pointer; }
+  #manual { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
   #manual input {
     width: 100%; padding: 11px 12px; border-radius: 10px;
     border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06);
@@ -57,24 +122,86 @@
   }
   #manual input:focus { outline: none; border-color: var(--accent); }
   #manual button { background: rgba(255,255,255,.14); color: var(--text); }
-  .hint { color: var(--dim); font-size: 12px; line-height: 1.7; }
+  .hint { color: var(--dim); font-size: 13px; line-height: 1.7; }
+  /* 扫码层：windowed 模式下相机在 webview 下面，页面必须透明才能看见画面 */
+  html.scan-mode, body.scan-mode { background: transparent !important; }
+  #scanning {
+    width: 100%; display: flex; flex-direction: column; align-items: center;
+    gap: 26px; padding-top: 8vh;
+  }
+  .scan-tip { position: relative; z-index: 1; font-size: 15px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  .scan-frame {
+    width: 220px; height: 220px; border-radius: 18px;
+    border: 2px solid rgba(255,255,255,.9);
+    box-shadow: 0 0 0 100vmax rgba(0,0,0,.45);
+  }
+  #scan-cancel { max-width: 200px; position: relative; z-index: 1; }
+  /* 连上以后右上角留一个很小的「换电脑」入口：否则记住自动连之后没有退路 */
+  #switch-pc {
+    position: fixed; z-index: 40; top: calc(env(safe-area-inset-top) + 8px); right: 10px;
+    width: 32px; height: 32px; padding: 0; border-radius: 50%;
+    background: rgba(0,0,0,.38); color: #fff; font-size: 14px; font-weight: 500;
+    display: flex; align-items: center; justify-content: center;
+  }
   .hide { display: none !important; }
 </style>
 </head>
 <body>
 <iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
+<button id="switch-pc" class="hide" title="换电脑">⇄</button>
 
 <div id="gate">
-  <div id="spinner" class="spin"></div>
-  <div id="title" class="title">正在找电脑…</div>
-  <div id="sub" class="sub">手机和电脑要在同一个 WiFi 下</div>
-  <button id="retry" class="hide">重试</button>
-  <div id="manual" class="hide">
-    <input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="电脑 IP，如 192.168.6.125" />
-    <button id="useip">用这个地址找</button>
-  </div>
-  <div id="hint" class="hint hide">
-    还找不到？<br />① 电脑上的「手机出货」面板开着没<br />② 电脑防火墙放行了没（面板里有按钮）
+  <div class="panel">
+    <!-- 查找中 -->
+    <div id="status">
+      <div class="spin" style="margin:0 auto 12px"></div>
+      <div class="title">正在找电脑…</div>
+      <div class="sub">手机和电脑要在同一个 WiFi 下</div>
+    </div>
+
+    <!-- 找到了：问要不要连、要不要记住 -->
+    <div id="found" class="hide" style="display:flex;flex-direction:column;align-items:center;gap:12px;width:100%">
+      <div class="icon-ok">✓</div>
+      <div class="title">发现电脑</div>
+      <div class="sub" id="found-sub"></div>
+      <label class="switch-row">
+        <span>下次直接连接，不再询问</span>
+        <input type="checkbox" id="remember" />
+      </label>
+      <button id="connect">连接</button>
+      <button id="research" class="ghost">重新搜索</button>
+    </div>
+
+    <!-- 没找到：扫码 / 历史 / 手填 -->
+    <div id="notfound" class="hide" style="display:flex;flex-direction:column;align-items:center;gap:12px;width:100%">
+      <div class="icon-bad">!</div>
+      <div class="title">没找到电脑</div>
+      <div id="err" class="hide"></div>
+      <button id="scan">扫二维码连接</button>
+      <button id="retry" class="ghost">重试</button>
+      <div id="history-wrap" class="hide" style="width:100%">
+        <div class="list-head"><span>最近连过</span><button id="clear">清空</button></div>
+        <div id="history"></div>
+      </div>
+      <div id="auto-note" class="hide"></div>
+      <details id="manual-wrap" style="width:100%">
+        <summary>手动填电脑 IP</summary>
+        <div id="manual">
+          <input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="电脑 IP，如 192.168.6.125" />
+          <button id="useip">用这个地址找</button>
+        </div>
+      </details>
+      <div class="hint">
+        还找不到？<br />① 电脑上的「手机出货」面板开着没<br />② 电脑防火墙放行了没（面板里有按钮）
+      </div>
+    </div>
+
+    <!-- 扫码中 -->
+    <div id="scanning" class="hide">
+      <div class="scan-tip">对准电脑上的二维码</div>
+      <div class="scan-frame"></div>
+      <button id="scan-cancel" class="ghost">取消</button>
+    </div>
   </div>
 </div>
 
@@ -82,95 +209,343 @@
 (function () {
   var view = document.getElementById('view');
   var gate = document.getElementById('gate');
-  var spinner = document.getElementById('spinner');
-  var title = document.getElementById('title');
-  var sub = document.getElementById('sub');
-  var retry = document.getElementById('retry');
-  var hint = document.getElementById('hint');
-  var manual = document.getElementById('manual');
-  var ipInput = document.getElementById('ip');
-  var useIp = document.getElementById('useip');
+  var switchPc = document.getElementById('switch-pc');
+  var el = {
+    status: document.getElementById('status'),
+    found: document.getElementById('found'),
+    notfound: document.getElementById('notfound'),
+    scanning: document.getElementById('scanning'),
+    foundSub: document.getElementById('found-sub'),
+    remember: document.getElementById('remember'),
+    err: document.getElementById('err'),
+    historyWrap: document.getElementById('history-wrap'),
+    history: document.getElementById('history'),
+    autoNote: document.getElementById('auto-note'),
+    ip: document.getElementById('ip')
+  };
 
   var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-  var HOST_KEY = 'shipping-shell.host';
-  function lastHost() { try { return localStorage.getItem(HOST_KEY) || ''; } catch (e) { return ''; } }
-  function saveHost(h) { try { localStorage.setItem(HOST_KEY, h); } catch (e) {} }
+
+  var HISTORY_KEY = 'shipping-shell.history';
+  var AUTO_KEY = 'shipping-shell.auto';
+  var LEGACY_HOST = 'shipping-shell.host';
+  var MAX_HISTORY = 5;
+
+  var lastPeer = null;   // 当前「发现」到的电脑
+
+  function readJSON(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function writeJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+  }
+  function loadHistory() {
+    var list = readJSON(HISTORY_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  function loadAuto() { return readJSON(AUTO_KEY, null); }
+  function saveAuto(entry) { writeJSON(AUTO_KEY, entry); }
+  function clearAuto() { try { localStorage.removeItem(AUTO_KEY); } catch (e) {} }
+
+  function pushHistory(entry) {
+    var list = loadHistory().filter(function (x) { return x.host !== entry.host; });
+    list.unshift({
+      host: entry.host,
+      name: entry.name || '',
+      url: entry.url || '',
+      last: Date.now()
+    });
+    writeJSON(HISTORY_KEY, list.slice(0, MAX_HISTORY));
+  }
+
+  function label(item) {
+    return (item && item.name) ? item.name : '电脑';
+  }
+  function timeText(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    var d = new Date(ts);
+    var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    if (diff < 60 * 1000) return '刚刚';
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + ' 分钟前';
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    if (d >= today) return '今天 ' + hm;
+    if (d >= new Date(today.getTime() - 86400000)) return '昨天 ' + hm;
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
+  }
+
+  function setState(name) {
+    el.status.classList.toggle('hide', name !== 'search');
+    el.found.classList.toggle('hide', name !== 'found');
+    el.notfound.classList.toggle('hide', name !== 'notfound');
+    el.scanning.classList.toggle('hide', name !== 'scanning');
+    switchPc.classList.add('hide');
+    gate.classList.remove('hide');
+  }
+
+  function leaveTo(url) {
+    view.onload = function () { gate.classList.add('hide'); };
+    view.src = url;
+    view.style.display = 'block';
+    switchPc.classList.remove('hide');
+    // 网页首屏慢时也别一直白屏：先露出 iframe，加载完再收门帘
+    setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1800);
+  }
 
   function searching() {
-    gate.classList.remove('hide');
+    lastPeer = null;
     view.style.display = 'none';
     view.removeAttribute('src');
-    spinner.classList.remove('hide');
-    retry.classList.add('hide');
-    hint.classList.add('hide');
-    manual.classList.add('hide');
-    title.textContent = '正在找电脑…';
-    sub.textContent = '手机和电脑要在同一个 WiFi 下';
+    setState('search');
   }
 
-  function failed(msg) {
-    gate.classList.remove('hide');
-    view.style.display = 'none';
-    spinner.classList.add('hide');
-    retry.classList.remove('hide');
-    hint.classList.remove('hide');
-    title.textContent = '没找到电脑';
-    // 把原生层返回的真实原因摆到界面上（权限被拒 / 广播发不出 / 没人应答），别只打 console
-    var detail = msg ? String(msg) : '';
-    sub.textContent = detail && detail !== '没找到电脑' ? detail : '检查是否同一 WiFi 后，点下面重试';
-    // 广播被系统或路由器拦掉时，手动填电脑 IP 走单播（单播通常还能通）
-    if (ipInput && !ipInput.value) ipInput.value = lastHost();
-    manual.classList.remove('hide');
+  function showFound(peer) {
+    lastPeer = peer;
+    setState('found');
+    el.foundSub.textContent = (peer.name || '电脑') + ' · ' + peer.host;
+    var auto = loadAuto();
+    el.remember.checked = !!(auto && auto.host === peer.host);
   }
 
-  function connect() {
-    if (!invoke) {
-      failed('当前不在 App 里运行（没有 Tauri 接口）');
+  function renderHistory() {
+    var list = loadHistory();
+    el.history.innerHTML = '';
+    if (!list.length) {
+      el.historyWrap.classList.add('hide');
       return;
     }
-    searching();
-    invoke('discover_peer').then(function (peer) {
-      if (!peer || !peer.url) { failed('电脑没回地址'); return; }
-      saveHost(peer.host);
-      view.onload = function () { gate.classList.add('hide'); };
-      view.src = peer.url;
-      view.style.display = 'block';
-      // 网页首屏慢时也别一直白屏：先露出 iframe，加载完再收门帘
-      setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1500);
-    }).catch(function (e) {
-      failed(String(e));
+    el.historyWrap.classList.remove('hide');
+    list.forEach(function (item) {
+      var b = document.createElement('button');
+      b.className = 'hist';
+      var n = document.createElement('span');
+      n.className = 'hist-name';
+      n.textContent = label(item);
+      var m = document.createElement('span');
+      m.className = 'hist-meta';
+      m.textContent = item.host + (item.last ? ' · ' + timeText(item.last) : '');
+      b.appendChild(n);
+      b.appendChild(m);
+      b.addEventListener('click', function () { connectHistory(item); });
+      el.history.appendChild(b);
     });
   }
 
-  function connectTo(host) {
-    if (!invoke) {
-      failed('当前不在 App 里运行（没有 Tauri 接口）');
+  function renderAutoNote() {
+    var auto = loadAuto();
+    if (!auto || !auto.host) {
+      el.autoNote.classList.add('hide');
+      el.autoNote.innerHTML = '';
       return;
     }
-    host = String(host || '').trim();
-    if (!host) { failed('先填电脑的 IP'); return; }
-    searching();
-    invoke('discover_at', { host: host }).then(function (peer) {
-      if (!peer || !peer.url) { failed('电脑没回地址'); return; }
-      saveHost(peer.host);
-      view.onload = function () { gate.classList.add('hide'); };
-      view.src = peer.url;
-      view.style.display = 'block';
-      setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1500);
-    }).catch(function (e) { failed(String(e)); });
+    el.autoNote.classList.remove('hide');
+    el.autoNote.innerHTML = '';
+    var span = document.createElement('span');
+    span.textContent = '下次会直接连 ' + (auto.name || auto.host);
+    var btn = document.createElement('button');
+    btn.textContent = '取消';
+    btn.addEventListener('click', function () {
+      clearAuto();
+      renderAutoNote();
+    });
+    el.autoNote.appendChild(span);
+    el.autoNote.appendChild(btn);
   }
 
-  retry.addEventListener('click', connect);
-  useIp.addEventListener('click', function () { connectTo(ipInput.value); });
-  ipInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') connectTo(ipInput.value);
+  function showNotFound(msg) {
+    lastPeer = null;
+    setState('notfound');
+    var detail = msg ? String(msg) : '';
+    if (detail && detail !== '没找到电脑') {
+      el.err.classList.remove('hide');
+      el.err.textContent = detail;
+    } else {
+      el.err.classList.add('hide');
+      el.err.textContent = '';
+    }
+    if (!el.ip.value) {
+      var hist = loadHistory();
+      if (hist.length) el.ip.value = hist[0].host;
+    }
+    renderHistory();
+    renderAutoNote();
+  }
+
+  function connectPeer(peer, remember) {
+    if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
+    if (remember) {
+      saveAuto({ host: peer.host, name: peer.name || '', url: peer.url });
+    }
+    pushHistory({ host: peer.host, name: peer.name || '', url: peer.url });
+    leaveTo(peer.url);
+  }
+
+  function connectUrl(raw, meta) {
+    var url = String(raw || '').trim();
+    if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+    var u;
+    try { u = new URL(url); } catch (e) { showNotFound('地址看不懂：' + url); return; }
+    var host = u.hostname;
+    if (!host) { showNotFound('地址里没有电脑 IP'); return; }
+    pushHistory({ host: host, name: (meta && meta.name) || '', url: u.href });
+    leaveTo(u.href);
+  }
+
+  function discover() {
+    if (!invoke) {
+      showNotFound('当前不在 App 里运行（没有 Tauri 接口）');
+      return Promise.reject(new Error('no tauri'));
+    }
+    return invoke('discover_peer');
+  }
+
+  function boot() {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    searching();
+    var auto = loadAuto();
+    discover().then(function (peer) {
+      if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
+      if (auto && auto.host === peer.host) { connectPeer(peer, false); return; }
+      showFound(peer);
+    }).catch(function (e) {
+      showNotFound(String(e && e.message ? e.message : e));
+    });
+  }
+
+  function connectHistory(item) {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    searching();
+    invoke('discover_at', { host: item.host }).then(function (peer) {
+      connectPeer(peer, false);
+    }).catch(function (e) {
+      // 电脑在线但 UDP 被拦时，退回上次的整条链接（口令没换就还能用）
+      if (item.url) { connectUrl(item.url, item); return; }
+      showNotFound('连不上 ' + item.host + '：' + e);
+    });
+  }
+
+  function parseScan(text) {
+    var s = String(text || '').trim();
+    if (!s) return null;
+    if (/^https?:\/\//i.test(s)) return s;
+    // 允许二维码里只放 host:port?t=... 或 IP
+    if (/^[\w.\-]+:\d+/.test(s) || /^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return 'http://' + s;
+    return null;
+  }
+
+  function scanQr() {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    // 先要相机权限：插件的 scan 在 iOS 14+ 不主动弹权限框，拒了会是黑屏
+    invoke('plugin:barcode-scanner|request_permissions').then(function (p) {
+      var state = p && p.camera;
+      if (state === 'denied') {
+        showNotFound('相机权限被拒：去 设置 → 出货助手 → 相机 打开后再试');
+        return;
+      }
+      startScan();
+    }).catch(function () {
+      startScan();
+    });
+  }
+
+  function startScan() {
+    // 相机画面垫在 webview 下面，页面变透明才看得见
+    document.documentElement.classList.add('scan-mode');
+    document.body.classList.add('scan-mode');
+    setState('scanning');
+    invoke('plugin:barcode-scanner|scan', {
+      windowed: true,
+      formats: ['QR_CODE'],
+      cameraDirection: 'back'
+    }).then(function (res) {
+      endScan();
+      var content = res && res.content ? String(res.content) : '';
+      var url = parseScan(content);
+      if (!url) {
+        showNotFound('扫到的不是电脑的连接地址：' + content.slice(0, 60));
+        return;
+      }
+      connectUrl(url);
+    }).catch(function (e) {
+      endScan();
+      var msg = String(e && e.message ? e.message : e);
+      if (/cancel|取消/i.test(msg)) { showNotFound(''); return; }
+      if (/denied|NS(CameraUsageDescription)/i.test(msg)) {
+        showNotFound('相机权限没开：去 设置 → 出货助手 → 相机 打开后再试');
+        return;
+      }
+      showNotFound('扫码失败：' + msg);
+    });
+  }
+
+  function endScan() {
+    document.documentElement.classList.remove('scan-mode');
+    document.body.classList.remove('scan-mode');
+  }
+
+  function connectManual() {
+    var host = String(el.ip.value || '').trim();
+    if (!host) { el.ip.focus(); return; }
+    searching();
+    invoke('discover_at', { host: host }).then(function (peer) {
+      connectPeer(peer, false);
+    }).catch(function (e) { showNotFound(String(e)); });
+  }
+
+  document.getElementById('connect').addEventListener('click', function () {
+    if (!lastPeer) return;
+    var auto = loadAuto();
+    // 明确取消勾选：把「下次自动连这台」也撤掉
+    if (!el.remember.checked && auto && auto.host === lastPeer.host) clearAuto();
+    connectPeer(lastPeer, el.remember.checked);
+  });
+  document.getElementById('research').addEventListener('click', boot);
+  document.getElementById('retry').addEventListener('click', boot);
+  document.getElementById('scan').addEventListener('click', scanQr);
+  document.getElementById('scan-cancel').addEventListener('click', function () {
+    if (!invoke) { showNotFound(''); return; }
+    // 原生层收到 cancel 会 reject 掉 scan 的 promise，统一在那里收尾
+    invoke('plugin:barcode-scanner|cancel').catch(function () {});
+  });
+  document.getElementById('clear').addEventListener('click', function () {
+    if (!loadHistory().length) return;
+    if (confirm('清空连接历史？')) {
+      try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+      renderHistory();
+    }
+  });
+  document.getElementById('useip').addEventListener('click', connectManual);
+  el.ip.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') connectManual();
+  });
+  switchPc.addEventListener('click', function () {
+    // 连上了想换一台：撤掉「下次直接连」，回到扫码/历史页
+    clearAuto();
+    view.style.display = 'none';
+    view.removeAttribute('src');
+    showNotFound('');
   });
   document.addEventListener('visibilitychange', function () {
-    // 从后台切回来、还没连上就再找一次
-    if (!document.hidden && !view.src) connect();
+    // 从后台切回来、还没连上就再找一次；
+    // 扫码时切出去（相机是原生界面）不要重复触发发现，等扫码回调就行
+    if (document.hidden || view.src) return;
+    if (!el.scanning.classList.contains('hide')) return;
+    boot();
   });
 
-  connect();
+  // 旧版本只记了一个 host，迁移成一条历史，别让用户重扫
+  try {
+    var legacy = localStorage.getItem(LEGACY_HOST);
+    if (legacy && !loadHistory().length) {
+      pushHistory({ host: legacy, name: '', url: '' });
+    }
+    if (legacy) localStorage.removeItem(LEGACY_HOST);
+  } catch (e) {}
+
+  boot();
 })();
 </script>
 </body>
