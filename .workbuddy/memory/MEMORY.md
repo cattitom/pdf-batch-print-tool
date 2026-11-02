@@ -17,7 +17,7 @@
 
 ## 验证惯例
 - 改核心逻辑：`cd core && cargo test --release`
-- 改桥接层：`cd src-tauri && cargo check`
+- 改桥接层：`cd src-tauri && cargo check --release`（debug 档案编 `ring` 会撞 MSVC `error D8050`，这台机器上必挂）
 - 改前端：`pnpm exec tsc --noEmit`
 - 出包：`pnpm tauri build`（产物在 `src-tauri/target/release/`）
 - **不要**用裸 `cargo build --release` 出包：没有 `tauri/custom-protocol`，前端会去连 `localhost:1420`，
