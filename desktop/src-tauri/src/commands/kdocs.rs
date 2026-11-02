@@ -163,8 +163,18 @@ fn spawn_bounded(
 /// 从 WPS 云表格拉最新来货登记，直接变成出货待办。
 ///
 /// `sheet` 传 None 表示自动挑最新一张来货登记表；传表名只重解析那一张（复用 10 分钟内的文件）。
+///
+/// 必须是 async：里面要跑 node 取数，几十秒起步。同步命令（非 async）跑在 Tauri 的
+/// 主线程上，会把整个窗口卡成「未响应」——用户看到的就是「双击打不开、卡住」。
 #[tauri::command]
-pub fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
+pub async fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
+    tauri::async_runtime::spawn_blocking(move || sync_kdocs_packing_blocking(sheet))
+        .await
+        .map_err(|e| ApiError::new("kdocs", format!("同步任务异常结束：{e}")))?
+}
+
+fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
+    let started = std::time::Instant::now();
     let dir = kdocs_workdir();
     let tools = dir.join("tools");
     let pull_js = tools.join("kdocs-pull.mjs");
@@ -185,20 +195,33 @@ pub fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, ApiErro
     let mut fver = String::new();
     if !reuse {
         log::info!("云表格同步：开始拉取");
-        let ran = spawn_bounded(
+        let ran = match spawn_bounded(
             "node",
             &[pull_js.clone().into_os_string(), xls.clone().into_os_string()],
             std::time::Duration::from_secs(120),
-        )
-        .map_err(|e| {
-            if e.code == "notfound" {
-                ApiError::new("kdocs", "找不到 node：取数脚本要 Node.js 18 以上")
-            } else {
-                e
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!(
+                    "云表格同步失败（{} ms）：{}",
+                    started.elapsed().as_millis(),
+                    e.message
+                );
+                return Err(if e.code == "notfound" {
+                    ApiError::new("kdocs", "找不到 node：取数脚本要 Node.js 18 以上")
+                } else {
+                    e
+                });
             }
-        })?;
+        };
         if !ran.ok {
-            return Err(ApiError::new("kdocs", ran.stderr.trim().to_string()));
+            let msg = if ran.stderr.trim().is_empty() {
+                format!("取数脚本异常退出（耗时 {} ms）", started.elapsed().as_millis())
+            } else {
+                ran.stderr.trim().to_string()
+            };
+            log::warn!("云表格同步失败（{} ms）：{msg}", started.elapsed().as_millis());
+            return Err(ApiError::new("kdocs", msg));
         }
         let pulled: serde_json::Value =
             serde_json::from_str(ran.stdout.trim()).unwrap_or(serde_json::Value::Null);
@@ -215,12 +238,19 @@ pub fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, ApiErro
 
     // 直接用 Rust 解 .xls：传了表名就按表名挑，没传就自动挑最新的来货登记表
     let path = xls.to_string_lossy().to_string();
-    let (packing, sheet_name, sheets) = core::parse_xls_file(&path, sheet.as_deref())
-        .map_err(|e| ApiError::new(e.code(), e.to_string()))?;
+    let (packing, sheet_name, sheets) = core::parse_xls_file(&path, sheet.as_deref()).map_err(|e| {
+        log::warn!(
+            "云表格同步：解析 {path} 失败（{} ms）：{}",
+            started.elapsed().as_millis(),
+            e
+        );
+        ApiError::new(e.code(), e.to_string())
+    })?;
     let bytes = std::fs::metadata(&xls).map(|m| m.len()).unwrap_or(0);
     log::info!(
-        "云表格同步：表 {sheet_name} → {} 条待办",
-        packing.items.len()
+        "云表格同步：表 {sheet_name} → {} 条待办（{} ms）",
+        packing.items.len(),
+        started.elapsed().as_millis()
     );
 
     Ok(KdocsSyncDto {

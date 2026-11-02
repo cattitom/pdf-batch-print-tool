@@ -32,8 +32,16 @@ const wantDoc = opt("doc", "");
 const FALLBACK_FID = "489766365819";
 // 没开浏览器时自己起无界面 Chrome，复用 kdocs-login.bat 那个登录过的配置目录
 const DOC_URL = wantDoc || "https://www.kdocs.cn/l/cie4FmnjnBhW";
+// Chrome 有两种装法：装给全机器（Program Files）和「仅为当前用户安装」（AppData\Local）。
+// 只认 Program Files 会在用户级安装的机器上一直失败，所以按顺序都找一遍。
+const CHROME_CANDIDATES = [
+  process.env.KDOCS_CHROME,
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  `${process.env.LOCALAPPDATA ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
+].filter(Boolean);
 const CHROME =
-  process.env.KDOCS_CHROME || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  CHROME_CANDIDATES.find((p) => existsSync(p)) ?? CHROME_CANDIDATES[1] ?? CHROME_CANDIDATES[0];
 const PROFILE = `${process.env.LOCALAPPDATA ?? "."}\\kdocs-cdp-profile`;
 const headlessPort = Number(opt("headless-port", "9333"));
 
@@ -120,12 +128,21 @@ try {
 // 连不上就自己起一个无界面 Chrome（复用同一个登录过的 profile），同步完随手关掉
 let selfStarted = false;
 if (!targets && !args.includes("--no-headless")) {
+  // 没装 Chrome 就直接说什么问题，别傻等 45 秒把桌面端拖住
+  if (!existsSync(CHROME)) {
+    console.error(
+      "没装 Chrome（找过这些位置都没找到）：\n" +
+        CHROME_CANDIDATES.map((p) => `  ${p}`).join("\n") +
+        "\n云表格同步要借一个登录过 WPS 的 Chrome 取数：装好 Chrome 后双击 kdocs-login.bat 登录一次，再点同步。"
+    );
+    process.exit(3);
+  }
   startHeadless();
   selfStarted = true;
   activePort = headlessPort;
   const hasDoc = () =>
     (targets ?? []).some((t) => t.type === "page" && /kdocs\.cn/.test(t.url));
-  for (let i = 0; i < 90 && !hasDoc(); i++) {
+  for (let i = 0; i < 40 && !hasDoc(); i++) {
     await new Promise((r) => setTimeout(r, 500));
     try {
       targets = await cdpTargets(headlessPort);

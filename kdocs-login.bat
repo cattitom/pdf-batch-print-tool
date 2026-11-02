@@ -6,8 +6,11 @@ echo [%DATE% %TIME%] start > "%LOG%"
 
 set "PROFILE=%LOCALAPPDATA%\kdocs-cdp-profile"
 set "URL=https://www.kdocs.cn/l/cie4FmnjnBhW"
-set "CHROME=C:\Program Files\Google\Chrome\Application\chrome.exe"
+set "CHROME=%KDOCS_CHROME%"
+if not defined CHROME set "CHROME=C:\Program Files\Google\Chrome\Application\chrome.exe"
 if not exist "%CHROME%" set "CHROME=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+rem Chrome may also be installed per-user (AppData\Local instead of Program Files)
+if not exist "%CHROME%" set "CHROME=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
 if not exist "%CHROME%" goto nochrome
 
 echo.

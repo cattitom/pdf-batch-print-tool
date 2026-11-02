@@ -20,3 +20,10 @@
 - 改桥接层：`cd src-tauri && cargo check`
 - 改前端：`pnpm exec tsc --noEmit`
 - 出包：`pnpm tauri build`（产物在 `src-tauri/target/release/`）
+- **不要**用裸 `cargo build --release` 出包：没有 `tauri/custom-protocol`，前端会去连 `localhost:1420`，
+  装到机器上就是「无法访问此页面」。要快可 `pnpm tauri build --no-bundle`。
+
+## 命令/线程约定
+- Tauri 的 `#[tauri::command]` 默认跑在主线程：凡是要起外部进程、等网络、几十秒起步的，
+  必须写成 `pub async fn` + `tauri::async_runtime::spawn_blocking`，否则窗口直接「未响应」。
+  2026-11-02 的「双击打不开」就是这个（云表格同步堵主线程）。
