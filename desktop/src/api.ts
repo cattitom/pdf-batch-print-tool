@@ -221,6 +221,12 @@ export const api = {
   /** 从「本次要出货」的截图里认入库号：codes 是认出来的，failed 是没读成功的图。 */
   parseShipImages: (paths: string[]) =>
     invoke<{ codes: string[]; failed: string[] }>("parse_ship_images", { paths }),
+  /** 产品标签照片 → 编码 + 名称（一张图一条），给「快速解析」的图片导入用。 */
+  parseLabelImages: (paths: string[]) =>
+    invoke<{ rows: { code: string; name: string }[]; failed: string[] }>(
+      "parse_label_images",
+      { paths },
+    ),
 
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),

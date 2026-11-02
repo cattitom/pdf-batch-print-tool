@@ -903,6 +903,130 @@ pub fn engine_name() -> &'static str {
     }
 }
 
+/// 通用「图片 → 词」：有 Paddle 模型就用（精度高），没有或失败退回系统 OCR。
+/// 给产品标签照片这类非表格图片用。
+pub fn recognize_text_words(path: &str) -> Result<Vec<Word>, String> {
+    for tier in available_tiers() {
+        if let Some(engine) = engine_for(tier) {
+            match recognize_words_paddle_with(path, &engine) {
+                Ok(words) if !words.is_empty() => return Ok(words),
+                Ok(_) => {}
+                Err(e) => log::warn!("PaddleOCR（{tier}）识别失败：{e}"),
+            }
+        }
+    }
+    recognize_words(path)
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}')
+}
+
+/// 像产品编码的串：大写字母/数字/连字符，首尾是字母或数字，至少两个字母、一个连字符。
+/// 例：`CX-GG-60PCS`、`ZX-WYB-LF`。用来从标签照片里挑编码，避免把名称或条码噪声当编码。
+fn looks_like_code(s: &str) -> bool {
+    let t = s.trim();
+    if t.len() < 5 || t.len() > 32 {
+        return false;
+    }
+    if !t.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    if !t.ends_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    let (mut letters, mut digits, mut hyphens) = (0, 0, 0);
+    for c in t.chars() {
+        if c.is_ascii_uppercase() {
+            letters += 1;
+        } else if c.is_ascii_digit() {
+            digits += 1;
+        } else if c == '-' {
+            hyphens += 1;
+        } else {
+            return false;
+        }
+    }
+    letters >= 2 && hyphens >= 1 && (digits >= 1 || hyphens >= 2)
+}
+
+/// 产品标签照片 → (编码, 名称)。
+///
+/// 标签上编码一般出现两次（条码下方小字 + 大字），名称是中文行，
+/// 照片里还有条码、气泡袋这些干扰，所以不切表格：
+/// 编码取「出现次数最多、字最大」的那串，名称取所有含汉字的词按位置拼起来。
+/// 一张图当一条记录；多条就选多张图。
+pub fn parse_label_image(path: &str) -> Result<(String, String), String> {
+    let words = recognize_text_words(path)?;
+    if words.is_empty() {
+        return Err("图片里没识别出文字，换张清楚点的照片".to_string());
+    }
+
+    let mut tallies: Vec<(String, usize, f32)> = Vec::new();
+    for w in &words {
+        let up = w.text.trim().to_ascii_uppercase();
+        if !looks_like_code(&up) {
+            continue;
+        }
+        match tallies.iter_mut().find(|(code, _, _)| *code == up) {
+            Some(slot) => {
+                slot.1 += 1;
+                slot.2 = slot.2.max(w.height());
+            }
+            None => tallies.push((up, 1, w.height())),
+        }
+    }
+    let code = tallies
+        .into_iter()
+        // 先看出现次数，再看字高（大字比条码下的小字可靠）
+        .max_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+        })
+        .map(|(code, _, _)| code)
+        .ok_or_else(|| "没认出编码：正对标签、避开反光再试".to_string())?;
+
+    let mut name_words: Vec<&Word> = words
+        .iter()
+        .filter(|w| w.text.chars().any(is_cjk))
+        .collect();
+    // 同一行的词 y 会差几个像素，先按 y 聚行再按 x 排，
+    // 否则「-60个装」可能因为 y 小一点跑到「挂钩」前面
+    let line_h = median(&words.iter().map(|w| w.height()).collect::<Vec<_>>()).unwrap_or(10.0);
+    name_words.sort_by(|a, b| {
+        a.cy()
+            .partial_cmp(&b.cy())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut name_rows: Vec<Vec<&Word>> = Vec::new();
+    for w in name_words {
+        let same_line = name_rows
+            .last()
+            .map(|row| {
+                let cy = row.iter().map(|x| x.cy()).sum::<f32>() / row.len() as f32;
+                (w.cy() - cy).abs() <= line_h * 0.6
+            })
+            .unwrap_or(false);
+        if same_line {
+            if let Some(row) = name_rows.last_mut() {
+                row.push(w);
+            }
+        } else {
+            name_rows.push(vec![w]);
+        }
+    }
+    for row in &mut name_rows {
+        row.sort_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    let name = name_rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|w| w.text.trim())
+        .collect::<String>();
+
+    Ok((code, name))
+}
+
 /// 合计校验：表里写了「合计 N 件」就对得上，没写（None）就算过。
 fn totals_match(sheet: &core::PackingSheet) -> bool {
     sheet

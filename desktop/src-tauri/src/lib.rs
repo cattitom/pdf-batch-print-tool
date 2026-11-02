@@ -1,8 +1,9 @@
 pub mod commands;
 mod logging;
 mod mobile;
+// 示例 examples/label_ocr.rs 直接调 OCR 跑真图验证，所以这里 pub
 #[cfg(windows)]
-mod ocr;
+pub mod ocr;
 
 use tauri::Manager;
 
@@ -64,6 +65,7 @@ pub fn run() {
             commands::mobile_info,
             commands::mobile_allow_firewall,
             commands::parse_ship_images,
+            commands::parse_label_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

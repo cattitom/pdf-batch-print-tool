@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { open as openFiles, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import HistoryButton from "../components/HistoryButton";
 import { api, errorHint, errorText } from "../api";
 
@@ -63,6 +64,10 @@ export default function ProductLabelPage() {
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [bulk, setBulk] = useState("");
   const [csvPath, setCsvPath] = useState<string | null>(null);
+  /** 首行留空：gLabels 默认把第一行当表头，空白行让数据从第二行开始。 */
+  const [blankFirst, setBlankFirst] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const items = rows
@@ -118,8 +123,11 @@ export default function ProductLabelPage() {
         }
       }
       // save_text_file 用 UTF-8 写盘、不带 BOM，gLabels 直接能读
-      await api.saveTextFile(outPath, lines.join("\r\n") + "\r\n");
+      const body = lines.join("\r\n");
+      await api.saveTextFile(outPath, (blankFirst ? "\r\n" : "") + body + "\r\n");
       setCsvPath(outPath);
+      // 导出完直接打开文件所在的位置并选中它，省得用户自己找
+      revealItemInDir(outPath).catch(() => {});
       // 记一笔历史，方便之后从「历史」里找回这份 CSV
       api
         .addPrintHistory({
@@ -144,6 +152,50 @@ export default function ProductLabelPage() {
     }
   };
 
+  /** 拍/选产品标签照片 → OCR 认编码和名称，追加到快速解析（已有编码跳过）。 */
+  const importImages = async () => {
+    setError(null);
+    setImportNote(null);
+    const picked = await openFiles({
+      multiple: true,
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    setImporting(true);
+    try {
+      const r = await api.parseLabelImages(paths);
+      const seen = new Set(items.map((it) => it.code.toUpperCase()));
+      const fresh: { code: string; name: string }[] = [];
+      for (const row of r.rows) {
+        const code = row.code.trim();
+        if (!code || seen.has(code.toUpperCase())) continue;
+        seen.add(code.toUpperCase());
+        fresh.push({ code, name: row.name.trim() });
+      }
+      if (fresh.length) {
+        // 用「现有行 + 新认出来的」重建文本，别只拿图片结果覆盖——
+        // 用户可能是在表格里一行行手填的，bulk 里没有那些内容
+        const merged = [...items, ...fresh];
+        const next = merged
+          .map((it) => (it.name ? `${it.code} ${it.name}` : it.code))
+          .join("\n");
+        onBulkChange(next);
+      }
+      const notes: string[] = [];
+      if (fresh.length) notes.push(`从 ${paths.length} 张图认出 ${fresh.length} 条`);
+      if (r.rows.length > fresh.length) {
+        notes.push(`跳过 ${r.rows.length - fresh.length} 条重复或空编码`);
+      }
+      if (r.failed.length) notes.push(`没读出来：${r.failed.join("；")}`);
+      setImportNote(notes.length ? notes.join("；") : "图片里没认出编码");
+    } catch (e) {
+      setError(errorText(e) + errorHint(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="page">
       <header className="page-head">
@@ -153,6 +205,14 @@ export default function ProductLabelPage() {
         </div>
         <div className="page-actions">
           <HistoryButton />
+          <label className="setting-toggle" title="gLabels 默认把第一行当表头；留空后数据从第二行开始">
+            <input
+              type="checkbox"
+              checked={blankFirst}
+              onChange={(e) => setBlankFirst(e.target.checked)}
+            />
+            首行留空
+          </label>
           <button className="btn primary big" onClick={doExportCsv} disabled={items.length === 0}>
             导出 CSV（给 gLabels）
           </button>
@@ -163,6 +223,15 @@ export default function ProductLabelPage() {
         <div className="card-head">
           <span className="card-title">快速解析</span>
           <span className="card-sub">每行一条：英文编码 + 中文名称</span>
+          <button
+            className="btn sm"
+            style={{ marginLeft: "auto" }}
+            onClick={importImages}
+            disabled={importing}
+            title="选箱子上的产品标签照片，自动认出编码和名称"
+          >
+            {importing ? "识别中…" : "从图片导入"}
+          </button>
         </div>
         <div className="card-body">
           <textarea
@@ -175,6 +244,11 @@ export default function ProductLabelPage() {
           <div className="muted" style={{ marginTop: 8 }}>
             编码读到第一个汉字或空白为止；Excel 两列直接粘（Tab / 逗号）也认；空行自动忽略
           </div>
+          {importNote && (
+            <div className="muted" style={{ marginTop: 4 }}>
+              {importNote}
+            </div>
+          )}
         </div>
       </section>
 

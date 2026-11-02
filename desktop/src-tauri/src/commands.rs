@@ -1063,6 +1063,34 @@ pub fn parse_ship_images(paths: Vec<String>) -> Result<serde_json::Value, ApiErr
     Ok(serde_json::json!({ "codes": codes, "failed": failed }))
 }
 
+/// 产品标签照片 → 编码 + 名称（一张图一条），给「快速解析」的图片导入用。
+///
+/// OCR 要跑几秒，放 spawn_blocking，别占 Tauri 主线程。
+#[tauri::command]
+pub async fn parse_label_images(paths: Vec<String>) -> Result<serde_json::Value, ApiError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        let mut failed: Vec<String> = Vec::new();
+        for path in paths {
+            match crate::ocr::parse_label_image(&path) {
+                Ok((code, name)) => {
+                    rows.push(serde_json::json!({ "code": code, "name": name }))
+                }
+                Err(e) => {
+                    let label = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    failed.push(format!("{label}：{e}"));
+                }
+            }
+        }
+        serde_json::json!({ "rows": rows, "failed": failed })
+    })
+    .await
+    .map_err(|e| ApiError::new("ocr", format!("识别任务异常结束：{e}")))
+}
+
 #[tauri::command]
 pub fn mobile_allow_firewall() -> Result<String, ApiError> {
     let bat = std::env::temp_dir().join("pdfprint-allow-mobile.bat");

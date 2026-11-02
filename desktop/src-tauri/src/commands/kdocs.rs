@@ -13,6 +13,11 @@ use super::{ApiError, PackingSheetDto};
 
 const KDOCS_PULL_MJS: &str = include_str!("../../../../tools/kdocs/kdocs-pull.mjs");
 
+/// 同一时刻只允许一个同步任务。命令改成 async 之后，后台自动同步和手动点击
+/// 可以同时进来，两个 spawn_blocking 会让两个 node 抢同一个 kdocs-latest.xls
+/// （一个写、一个解析），可能解析到半截文件。
+static SYNC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 一次同步的结果：解析好的待办 + 这次用的表（前端拿 sheets 做表名下拉）。
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +179,15 @@ pub async fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, A
 }
 
 fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
+    // 后台轮询和手动点击撞上时，后来的直接返回，不排队再跑一遍
+    let _guard = SYNC_LOCK.try_lock().map_err(|e| match e {
+        std::sync::TryLockError::WouldBlock => {
+            ApiError::new("kdocs", "云表格正在同步中，等这次跑完再点")
+        }
+        std::sync::TryLockError::Poisoned(_) => {
+            ApiError::new("kdocs", "上次同步异常退出，重开程序再试")
+        }
+    })?;
     let started = std::time::Instant::now();
     let dir = kdocs_workdir();
     let tools = dir.join("tools");
