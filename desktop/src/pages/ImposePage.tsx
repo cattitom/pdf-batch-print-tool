@@ -619,12 +619,12 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
               </label>
             </div>
             <div className="field" style={{ width: 96 }}>
-              <label title="新加入的文件按这个页数">默认页数</label>
+              <label title="改一次，队列里所有文件的页数一起改（单个文件还能单独微调）">统一页数</label>
               <input
                 type="number"
                 min={1}
                 value={defaultTarget}
-                title="新加入的文件按这个页数"
+                title="改一次，队列里所有文件的页数一起改（单个文件还能单独微调）"
                 onChange={(e) => {
                   const v = Math.max(1, +e.target.value || 1);
                   setDefaultTarget(v);
