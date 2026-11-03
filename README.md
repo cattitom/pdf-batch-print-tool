@@ -18,10 +18,10 @@
 
 前置条件（缺一个都会在界面报中文错）：
 
-1. **登录态**：先双击仓库根的 `kdocs-login.bat`，用专门的浏览器配置打开云表格并扫码登录。窗口开着、关掉都行——关掉之后同步会自己起无界面 Chrome。这个配置记着登录状态，下次只需确认一次
+1. **登录态**：先点「出货清单」页头的 **「WPS 登录」**（脚本随程序发，装完在 `<程序目录>\data\kdocs\tools\kdocs-login.bat`；仓库根目录也有同一份），用专门的浏览器配置打开云表格并扫码登录。窗口开着、关掉都行——关掉之后同步会自己起无界面 Chrome。这个配置记着登录状态，下次只需确认一次
 2. **Node.js 18+**（脚本用 `fetch` / `WebSocket`，本机 v24 可用）
 
-链路：`kdocs-login.bat` 起的 Chrome（9222 调试端口）→ `tools/kdocs/kdocs-pull.mjs` 在页面里拿 presigned 下载地址取 `.xls` → Rust 直接解 BIFF8（`desktop/core/src/xls.rs`，零依赖）→ 现有解析器变待办。**不再需要 Python**。取数脚本编进 Rust 二进制，运行期写到缓存目录下的 `tools\`，打包不用额外配资源。
+链路：`kdocs-login.bat` 起的 Chrome（9222 调试端口）→ `tools/kdocs/kdocs-pull.mjs` 在页面里拿 presigned 下载地址取 `.xls` → Rust 直接解 BIFF8（`desktop/core/src/xls.rs`，零依赖）→ 现有解析器变待办。**不再需要 Python**。取数脚本和登录脚本都 `include_str!` 编进 Rust 二进制，运行期写到缓存目录下的 `tools\`，打包不用额外配资源。
 
 **缓存就放在程序旁边**：`<desktop.exe 所在目录>\data\kdocs\`，里面有 `kdocs-latest.xls` / 取数脚本 / 版本号记录。整包拷到另一台电脑（公司机器）时缓存跟着走，进门就能直接铺表。只有 exe 目录写不进去（放到 `C:\Program Files` 之类）才退回 `%LOCALAPPDATA%\pdf-batch-print-tool\kdocs\`。
 
@@ -34,7 +34,7 @@
 
 > 为什么不用「WPS 云盘同步到本地 + 监控文件」：在线表格在云盘目录里只有一个几百字节的 `.wpsonline` 指针（内容只有 fileid），真实数据一直在云上，WPS 客户端不会把它同步成 xlsx。手动另存出来的是快照，云表格里新加的行不会自己出现。
 
-**不用一直开着浏览器**：同步时如果连不上 9222（也就是没开 `kdocs-login.bat` 那个窗口），脚本会自己起一个无界面 Chrome（`--headless=new`，复用同一个登录配置目录 `%LOCALAPPDATA%\kdocs-cdp-profile`），拉完数据立刻退出。也就是说日常只点一下同步、什么都不用开；只有登录态过期时才需要重新双击 `kdocs-login.bat` 扫码。注意同一个配置目录不能同时被两个 Chrome 打开——窗口还开着的话脚本就直接用它，别两边并开（想强制走无界面加 `--no-headless` 之外的行为请先关窗口）。
+**不用一直开着浏览器**：同步时如果连不上 9222（也就是没开 `kdocs-login.bat` 那个窗口），脚本会自己起一个无界面 Chrome（`--headless=new`，复用同一个登录配置目录 `%LOCALAPPDATA%\kdocs-cdp-profile`），拉完数据立刻退出。也就是说日常只点一下同步、什么都不用开；只有登录态过期时才需要重新点「WPS 登录」（或双击 `kdocs-login.bat`）扫码。注意同一个配置目录不能同时被两个 Chrome 打开——窗口还开着的话脚本就直接用它，别两边并开（想强制走无界面加 `--no-headless` 之外的行为请先关窗口）。
 
 ## 手机出货（局域网）
 

@@ -40,6 +40,7 @@ import {
   HistoryOutlined,
   ImportOutlined,
   InboxOutlined,
+  LoginOutlined,
   MobileOutlined,
   PieChartOutlined,
   PushpinOutlined,
@@ -1492,6 +1493,15 @@ export default function PackingPage({
     api.setSetting(KEY_TASK_META, "[]").catch(() => {});
   };
 
+  /** 打开 WPS 登录窗口：脚本随程序发（data/kdocs/tools/kdocs-login.bat），不用自己找 */
+  const openKdocsLogin = async () => {
+    try {
+      await api.kdocsLoginOpen();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+
   /** 一键放行防火墙：后端弹一次 UAC 跑 netsh，结果既显示在弹窗里，也走右下角浮条 */
   const allowFirewall = async () => {
     try {
@@ -1577,9 +1587,18 @@ export default function PackingPage({
           </button>
           <button
             className="btn"
+            onClick={() => void openKdocsLogin()}
+            disabled={busy || syncing}
+            title="打开 WPS 云表格登录窗口：扫码登录一次，之后同步会自动复用登录态"
+          >
+            <LoginOutlined />
+            WPS 登录
+          </button>
+          <button
+            className="btn"
             onClick={() => void openCached()}
             disabled={busy || syncing}
-            title="不联网：直接解析上次同步下载的 .xls 缓存（测试用，省得每次去云端拉）"
+            title="不联网：直接解析上次同步下载的 .xls 缓存（测试省得每次去云端拉）"
           >
             <HistoryOutlined />
             本地缓存

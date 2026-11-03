@@ -12,6 +12,8 @@ use serde::Serialize;
 use super::{ApiError, PackingSheetDto};
 
 const KDOCS_PULL_MJS: &str = include_str!("../../../../tools/kdocs/kdocs-pull.mjs");
+/// 登录脚本也内嵌：装到别的电脑上时，用户不用去仓库里翻这个 .bat。
+const KDOCS_LOGIN_BAT: &str = include_str!("../../../../kdocs-login.bat");
 
 /// 同一时刻只允许一个同步任务。命令改成 async 之后，后台自动同步和手动点击
 /// 可以同时进来，两个 spawn_blocking 会让两个 node 抢同一个 kdocs-latest.xls
@@ -276,4 +278,39 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
         fver,
         path,
     })
+}
+
+/// 打开 WPS 云表格登录窗口（kdocs-login.bat 的副本）。
+///
+/// 脚本跟程序一起发：include_str! 内嵌，运行期写到 data/kdocs/tools/，
+/// 装到别的电脑上也能直接登录，不用去仓库里翻这个 .bat。返回脚本路径，方便排查。
+#[tauri::command]
+pub fn open_kdocs_login() -> Result<String, ApiError> {
+    let tools = kdocs_workdir().join("tools");
+    std::fs::create_dir_all(&tools)
+        .map_err(|e| ApiError::new("kdocs", format!("建目录失败 {}：{e}", tools.display())))?;
+    let bat = tools.join("kdocs-login.bat");
+    write_script(&bat, KDOCS_LOGIN_BAT)?;
+    let display = bat.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // CREATE_NEW_CONSOLE：登录提示单独一个窗口；Chrome 由脚本自己 start，
+        // 主程序退出也不会把它带走
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg(&display)
+            .creation_flags(0x0000_0010)
+            .spawn()
+            .map_err(|e| ApiError::new("kdocs", format!("启动登录窗口失败：{e}")))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = &display;
+        return Err(ApiError::new("kdocs", "WPS 云表格同步只在 Windows 上可用"));
+    }
+
+    log::info!("WPS 登录：启动 {display}");
+    Ok(display)
 }

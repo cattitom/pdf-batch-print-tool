@@ -133,7 +133,7 @@ if (!targets && !args.includes("--no-headless")) {
     console.error(
       "没装 Chrome（找过这些位置都没找到）：\n" +
         CHROME_CANDIDATES.map((p) => `  ${p}`).join("\n") +
-        "\n云表格同步要借一个登录过 WPS 的 Chrome 取数：装好 Chrome 后双击 kdocs-login.bat 登录一次，再点同步。"
+        "\n云表格同步要借一个登录过 WPS 的 Chrome 取数：装好 Chrome 后点页头「WPS 登录」按钮（或双击 kdocs-login.bat）登录一次，再点同步。"
     );
     process.exit(3);
   }
@@ -156,13 +156,13 @@ if (!targets && !args.includes("--no-headless")) {
     if (seen.some((u) => /account\.kdocs\.cn|passport|\/login/.test(u))) {
       console.error(
         "无界面 Chrome 起来了，但停在 WPS 登录页——配置目录里的登录态过期了。\n" +
-          "双击 kdocs-login.bat 扫码登录一次，然后再点同步。"
+          "点「WPS 登录」按钮扫码登录一次（或双击 kdocs-login.bat），然后再点同步。"
       );
       process.exit(5);
     }
     console.error(
       `连不上 Chrome 调试端口 ${port}，无界面模式也没起来（端口 ${headlessPort}）。\n` +
-        "最常见的原因：kdocs-login.bat 那个窗口还开着——同一个配置目录不能同时开两次。\n" +
+        "最常见的原因：「WPS 登录」那个窗口还开着——同一个配置目录不能同时开两次。\n" +
         "把那个窗口关掉再点同步，或者干脆留着窗口、不用无界面模式。"
     );
     process.exit(3);
@@ -174,7 +174,7 @@ const target = wantDoc ? pages.find((p) => p.url.includes(wantDoc)) ?? pages[0] 
 if (!target) {
   console.error(
     "Chrome 开着，但没有 WPS 云表格标签页。\n" +
-      "双击 kdocs-login.bat 会打开 https://www.kdocs.cn/l/cie4FmnjnBhW 并保持登录。"
+      "点「WPS 登录」按钮（或双击 kdocs-login.bat）会打开 https://www.kdocs.cn/l/cie4FmnjnBhW 并保持登录。"
   );
   process.exit(4);
 }
@@ -216,7 +216,7 @@ let meta = await waitMeta(target);
 if (!meta?.ok) {
   console.error(
     `云表格页面还没加载完（停在 ${meta?.href ?? "?"}）。\n` +
-      "等一下再点同步；一直这样就把 kdocs-login.bat 那个窗口刷新一次。"
+      "等一下再点同步；一直这样就把「WPS 登录」那个窗口刷新一次。"
   );
   process.exit(4);
 }
@@ -258,7 +258,7 @@ if (!info) {
 if (info?.status === 401 || info?.status === 403 || !info?.isJson) {
   console.error(
     `WPS 云表格没登录（下载接口 HTTP ${info?.status ?? "?"}）。\n` +
-      "在 kdocs-login.bat 打开的窗口里扫码登录，登录完成后保持窗口开着再点同步。"
+      "在「WPS 登录」打开的窗口里扫码登录，登录完成后保持窗口开着再点同步。"
   );
   process.exit(5);
 }

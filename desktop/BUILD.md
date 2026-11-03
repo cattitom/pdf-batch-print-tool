@@ -124,6 +124,13 @@ pnpm tauri build
 #   src-tauri/target/release/desktop.exe         (绿色单文件，可直接运行)
 ```
 
+**安装包会问装到哪**：双击 NSIS 安装包，第 2 页就是「Choose the folder in which to install」，
+默认 `%LOCALAPPDATA%\PdfBatchPrint`（不需要管理员），点 Browse 可以换成任意可写目录（D 盘、U 盘都行）。
+已经装过旧版时前面会多一页「已安装 → Add/Reinstall / Uninstall」，选 Add/Reinstall 的下一页同样是选目录；
+想把旧位置整个搬走，就在那一页选 Uninstall，再在下一页填新目录。
+安装模式保持默认 `currentUser`（不弹 UAC）；要「为所有用户安装」得在 `tauri.conf.json` 加
+`bundle.windows.nsis.installMode = "both"`，但那种模式**会强制要管理员**，而且会先用一页「装给谁」顶掉向导顺序。
+
 OCR 模型（medium 检测 + small 识别，约 40MB）由 `bundle.resources` 打进安装包，装完就能用
 PaddleOCR，不用再手动拷模型。不想带模型就把 `tauri.conf.json` 里那三条 `resources` 删掉，
 安装包回到 6MB 左右，程序自动退回系统 OCR。

@@ -54,6 +54,7 @@ pub fn run() {
             commands::parse_packing_image,
             commands::parse_packing_xls,
             commands::kdocs::sync_kdocs_packing,
+            commands::kdocs::open_kdocs_login,
             commands::save_text_file,
             commands::read_log_tail,
             commands::clear_log,

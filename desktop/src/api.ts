@@ -253,6 +253,8 @@ export const api = {
   // sheet 传 null = 自动挑最新一张来货登记表；传表名 = 只重解析那张（用刚下的文件）
   syncKdocsPacking: (sheet?: string | null) =>
     invoke<KdocsSyncDto>("sync_kdocs_packing", { sheet: sheet ?? null }),
+  /** 打开 WPS 云表格登录窗口（脚本随程序发，返回落盘路径） */
+  kdocsLoginOpen: () => invoke<string>("open_kdocs_login"),
   saveTextFile: (path: string, content: string) =>
     invoke<void>("save_text_file", { path, content }),
 
