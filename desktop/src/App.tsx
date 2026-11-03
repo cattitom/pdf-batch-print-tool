@@ -18,9 +18,10 @@ import ProductLabelPage from "./pages/ProductLabelPage";
 import SettingsPage from "./pages/SettingsPage";
 import BoxPlanPage from "./pages/BoxPlanPage";
 import PackingPage from "./pages/PackingPage";
+import WechatPage from "./pages/WechatPage";
 import "./App.css";
 
-type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "settings";
+type TabKey = "impose" | "packing" | "boxplan" | "label" | "product" | "wechat" | "settings";
 
 interface TabDef {
   key: TabKey;
@@ -101,6 +102,7 @@ export default function App() {
     ...(showLabelTab ? [LABEL_TAB] : []),
     ...(showBoxplanTab ? [BOXPLAN_TAB] : []),
     ...(showProductTab ? [PRODUCT_TAB] : []),
+    // 微信消息先隐藏，代码保留在 WechatPage，后面再放出来
     BASE_TABS[2],
   ];
 
@@ -175,6 +177,9 @@ export default function App() {
         </div>
         <div style={{ display: tab === "product" ? "block" : "none" }}>
           <ProductLabelPage />
+        </div>
+        <div style={{ display: tab === "wechat" ? "block" : "none" }}>
+          <WechatPage />
         </div>
         <div style={{ display: tab === "settings" ? "block" : "none" }}>
           <SettingsPage

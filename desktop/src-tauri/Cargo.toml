@@ -35,6 +35,16 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # 枚举网卡挑局域网 IP（跳过 VPN / 虚拟网卡）
 local-ip-address = "0.6"
 mdns-sd = "0.21.6"
+# 微信本地库解密：SQLCipher4（AES-256-CBC + HMAC-SHA512）
+aes = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
+md-5 = "0.10"
+# 微信消息里的引用/文件是 zstd 压缩：用纯 Rust 解码，避免 zstd-sys 的 C 构建
+ruzstd = "0.8"
+chrono = "0.4"
+regex = "1"
 
 # 查找 WPS 安装路径（读取注册表）
 [target.'cfg(windows)'.dependencies]
@@ -49,6 +59,10 @@ windows = { version = "0.62", features = [
     "Storage",
     "Storage_Streams",
     "Win32_System_Com",
+    # 微信解密：读 Weixin.exe 进程内存
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_Debug",
 ] }
 # 识别前放大图片（小字号直接 OCR 掉字严重）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

@@ -28,6 +28,55 @@ import type { PackingSheetDto } from "./bindings/PackingSheetDto";
 import type { PackingItemDto } from "./bindings/PackingItemDto";
 import type { KdocsSyncDto } from "./bindings/KdocsSyncDto";
 
+// ---------- 微信消息（后端 wechat 模块，手写类型） ----------
+
+export interface WechatAccount {
+  dataDir: string;
+  wxid: string;
+  decrypted: boolean;
+}
+
+export interface WechatStatus {
+  accounts: WechatAccount[];
+  selected: string | null;
+}
+
+export interface WechatScanResult {
+  ok: number;
+  failed: number;
+  skipped: number;
+  walFrames: number;
+  ms: number;
+  outDir: string;
+}
+
+export interface WechatRoom {
+  id: string;
+  name: string;
+  count: number;
+  last: number;
+}
+
+export interface WechatMsgFields {
+  customer: string;
+  sku: string;
+  qty: string;
+}
+
+export interface WechatMsg {
+  ts: number;
+  time: string;
+  sender: string;
+  cat: string;
+  text: string;
+  fields?: WechatMsgFields;
+}
+
+export interface WechatExport {
+  rows: number;
+  path: string;
+}
+
 export type CropSpec = CropDto;
 export type ImposeFile = ImposeFileDto;
 export type ImposeOpts = ImposeOptsDto;
@@ -227,6 +276,32 @@ export const api = {
       "parse_label_images",
       { paths },
     ),
+
+  // 微信消息（本机微信 4.x 库解密后读取）
+  wechatStatus: (extra: string[] = []) =>
+    invoke<WechatStatus>("wechat_status", { extra }),
+  /** 校验手选的目录，返回里面认出的账号（空数组 = 不是微信数据目录）。 */
+  wechatCheckDir: (path: string) => invoke<WechatAccount[]>("wechat_check_dir", { path }),
+  wechatScan: (account: string) => invoke<WechatScanResult>("wechat_scan", { account }),
+  wechatRooms: (account: string) => invoke<WechatRoom[]>("wechat_rooms", { account }),
+  wechatMessages: (
+    account: string,
+    chatId: string,
+    days: number | null,
+    limit: number | null,
+    kind: number | null,
+  ) =>
+    invoke<WechatMsg[]>("wechat_messages", { account, chatId, days, limit, kind }),
+  wechatPoll: (account: string, chatId: string, afterTs: number) =>
+    invoke<WechatMsg[]>("wechat_poll", { account, chatId, afterTs }),
+  wechatExportCsv: (
+    account: string,
+    chatId: string,
+    days: number | null,
+    kind: number | null,
+    path: string,
+  ) =>
+    invoke<WechatExport>("wechat_export_csv", { account, chatId, days, kind, path }),
 
   // 设置
   allSettings: () => invoke<Record<string, string>>("all_settings"),

@@ -1,0 +1,168 @@
+/* 微信消息页：左边群列表，右边消息表 */
+
+.wechat-layout {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.wechat-left {
+  position: sticky;
+  top: 0;
+}
+.wechat-room-search {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+}
+.wechat-room-search:focus {
+  outline: none;
+  border-color: var(--text);
+}
+.wechat-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 240px);
+  overflow-y: auto;
+}
+.wechat-room {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wechat-room:hover {
+  background: rgba(15, 17, 21, 0.05);
+}
+.wechat-room.active {
+  background: var(--text);
+  color: #fff;
+}
+.wechat-room .rname {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+.wechat-room .rmeta {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.wechat-room.active .rmeta {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.wechat-filters {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.wechat-select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12.5px;
+}
+
+.wechat-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.wechat-msg-wrap {
+  max-height: calc(100vh - 560px);
+  min-height: 180px;
+  overflow: auto;
+}
+.wechat-extract-wrap {
+  max-height: 200px;
+  overflow: auto;
+}
+.wechat-msg-table {
+  table-layout: fixed;
+}
+.wechat-msg-table td {
+  vertical-align: top;
+}
+.wechat-msg-table td:first-child {
+  white-space: nowrap;
+}
+.wechat-msg-table td.msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.wechat-empty-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 群关注：每行右侧星标，勾选「只看关注」后只显示关注的群 */
+.wechat-room-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.wechat-room-row .wechat-room {
+  flex: 1;
+  min-width: 0;
+}
+.wechat-pin {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.35;
+}
+.wechat-room-row:hover .wechat-pin {
+  opacity: 0.9;
+}
+.wechat-pin.on {
+  opacity: 1;
+  color: #d99a00;
+}
+.wechat-only-pinned {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wechat-divider-row td {
+  padding: 6px 0;
+  text-align: center;
+  color: #d33b3b;
+  font-weight: 600;
+  letter-spacing: 2px;
+}

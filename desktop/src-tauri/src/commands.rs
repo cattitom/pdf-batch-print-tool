@@ -789,6 +789,9 @@ pub fn parse_packing_image(path: String) -> Result<PackingSheetDto, ApiError> {
 // 实现见 commands/kdocs.rs：取数链路独立成模块，主文件只留入口。
 pub mod kdocs;
 
+// ---------- 微信消息（本地库解密/读取/导出） ----------
+pub mod wechat;
+
 /// 把生成的 Markdown 清单写盘（路径由前端保存对话框给）。
 #[tauri::command]
 pub fn save_text_file(path: String, content: String) -> Result<(), ApiError> {

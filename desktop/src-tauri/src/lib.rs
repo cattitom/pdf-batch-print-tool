@@ -1,6 +1,7 @@
 pub mod commands;
 mod logging;
 mod mobile;
+mod wechat;
 // 示例 examples/label_ocr.rs 直接调 OCR 跑真图验证，所以这里 pub
 #[cfg(windows)]
 pub mod ocr;
@@ -66,6 +67,13 @@ pub fn run() {
             commands::mobile_allow_firewall,
             commands::parse_ship_images,
             commands::parse_label_images,
+            commands::wechat::wechat_status,
+            commands::wechat::wechat_check_dir,
+            commands::wechat::wechat_scan,
+            commands::wechat::wechat_rooms,
+            commands::wechat::wechat_messages,
+            commands::wechat::wechat_poll,
+            commands::wechat::wechat_export_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
