@@ -21,3 +21,4 @@ log = "0.4"
 # 装箱单解析：xlsx 就是 zip，只用得上 deflate；csv 在中文 Windows 常是 GBK
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 encoding_rs = "0.8"
+ttf-parser = "0.25.1"
