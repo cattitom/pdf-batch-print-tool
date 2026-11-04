@@ -259,6 +259,45 @@ function toMarkdown(rows: PackingItemDto[]): string {
   return out.join("\n").trimEnd() + "\n";
 }
 
+/** 一票一段的「豆包粘贴稿」：按单号分块，粘给豆包就能生成可勾选的飞书待办清单。 */
+function toDoubao(rows: PackingItemDto[]): { text: string; tickets: number; pieces: number } {
+  const order: string[] = [];
+  const groups = new Map<string, PackingItemDto[]>();
+  for (const row of rows) {
+    const wb = row.waybill.trim();
+    // 没单号的行分不出票，粘给豆包也只会变成一锅粥
+    if (!wb) continue;
+    const list = groups.get(wb);
+    if (list) list.push(row);
+    else {
+      groups.set(wb, [row]);
+      order.push(wb);
+    }
+  }
+
+  const blocks: string[] = [];
+  let pieces = 0;
+  order.forEach((wb, i) => {
+    const list = groups.get(wb)!;
+    const total = list.reduce((n, r) => n + r.qty, 0);
+    pieces += total;
+    const cust = list.map((r) => r.customer.trim()).find(Boolean) || "—";
+    blocks.push(
+      [
+        `━━━ 第 ${i + 1} 张 · 单号 ${wb} · ${total} 件 · ${list.length} 行 ━━━`,
+        `帮我新建一篇飞书文档，标题：入库核对清单 | 单号 ${wb}（${total}件）`,
+        `客户：${cust} · ${list.length} 行 · ${total} 件`,
+        "正文用待办清单（可勾选的那种），一条一行：",
+        "",
+        ...list.map((r) => `${r.name} ｜ 数量 ${r.qty} ｜ 入库号 ${r.inbound.trim() || "—"}`),
+        "",
+      ].join("\n")
+    );
+  });
+
+  return { text: blocks.join("\n"), tickets: order.length, pieces };
+}
+
 /** 包一层「用户改过的行」：编辑后重新算 md，不回后端。 */
 export default function PackingPage({
   pendingDrop,
@@ -341,6 +380,7 @@ export default function PackingPage({
   }, [pinned, rows]);
 
   const md = useMemo(() => toMarkdown(rows), [rows]);
+  const doubao = useMemo(() => toDoubao(rows), [rows]);
   const checkedCount = rows.filter((r) => r.checked).length;
   const totalQty = rows.reduce((n, r) => n + (Number.isFinite(r.qty) ? r.qty : 0), 0);
   const issueCount = rows.filter((r) => r.issues.length > 0).length;
@@ -1279,6 +1319,29 @@ export default function PackingPage({
     }
   };
 
+  /** 导出「豆包粘贴稿」：按票一段，粘给豆包生成飞书待办清单 */
+  const exportDoubao = async () => {
+    if (doubao.tickets === 0) {
+      setError("当前表里没有带单号的票，导不出清单");
+      return;
+    }
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const who = (cloudSheet || "").trim() || day;
+      const out = await saveFileDialog({
+        defaultPath: `豆包清单_${who}.txt`,
+        filters: [{ name: "文本", extensions: ["txt"] }],
+      });
+      if (!out) return;
+      await api.saveTextFile(out, doubao.text);
+      setSavedPath(out);
+      setScanHint(`已导出 ${doubao.tickets} 票 · ${doubao.pieces} 件，可以粘给豆包了`);
+      setError(null);
+    } catch (e) {
+      setError(errorText(e) + errorHint(e));
+    }
+  };
+
   const openLog = async () => {
     setLogBusy(true);
     try {
@@ -1635,6 +1698,15 @@ export default function PackingPage({
           >
             <PieChartOutlined />
             统计
+          </button>
+          <button
+            className="btn"
+            onClick={exportDoubao}
+            disabled={rows.length === 0}
+            title="按单号一票一段，导出能直接粘给豆包生成飞书待办清单的文本"
+          >
+            <CopyOutlined />
+            豆包清单
           </button>
           <button
             className="btn"

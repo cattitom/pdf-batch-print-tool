@@ -460,7 +460,9 @@ fn respond(req: Request, body: String, ctype: &str, status: u16) {
     let resp = Response::from_string(body)
         .with_status_code(StatusCode(status))
         .with_header(header("Content-Type", ctype))
-        .with_header(header("Cache-Control", "no-store, max-age=0"));
+        .with_header(header("Cache-Control", "no-store, max-age=0"))
+        // iOS 外壳（tauri:// 本地页）要跨域拉清单、回传勾选，浏览器端没有这行会被拦
+        .with_header(header("Access-Control-Allow-Origin", "*"));
     let _ = req.respond(resp);
 }
 
@@ -497,6 +499,17 @@ fn cookie_token(req: &Request) -> Option<String> {
 
 fn handle(mut req: Request, shared: &MobileShared) {
     let (path, query) = split_url(req.url());
+
+    // 跨域预检：外壳的离线清单会带着 Content-Type: application/json 发 POST
+    if *req.method() == Method::Options {
+        let resp = Response::empty(StatusCode(204))
+            .with_header(header("Access-Control-Allow-Origin", "*"))
+            .with_header(header("Access-Control-Allow-Methods", "GET, POST, OPTIONS"))
+            .with_header(header("Access-Control-Allow-Headers", "Content-Type"))
+            .with_header(header("Access-Control-Max-Age", "86400"));
+        let _ = req.respond(resp);
+        return;
+    }
     let token = current_token(shared);
     let query_tok = query_token(query);
     let cookie_tok = cookie_token(&req);

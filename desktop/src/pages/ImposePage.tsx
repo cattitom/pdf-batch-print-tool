@@ -448,6 +448,24 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
           <div className="card-head">
             <span className="card-title">文件队列</span>
             <span className="card-sub">{rows.length} 个文件 · 按顺序合并</span>
+            <label
+              className="ctl queue-unify"
+              title="改一次，队列里所有文件的页数一起改（单个文件还能单独微调）"
+            >
+              统一页数
+              <input
+                type="number"
+                min={1}
+                value={defaultTarget}
+                aria-label="统一页数"
+                onChange={(e) => {
+                  const v = Math.max(1, +e.target.value || 1);
+                  setDefaultTarget(v);
+                  // 所有已添加文件的目标页数同步更新
+                  setRows((prev) => prev.map((r) => ({ ...r, targetPages: v })));
+                }}
+              />
+            </label>
             <div className="spacer" />
             <button className="btn soft sm" onClick={addFiles} disabled={busy}>
               <PlusOutlined />
@@ -617,21 +635,6 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
                 <input type="checkbox" checked={pageNum} onChange={(e) => setPageNum(e.target.checked)} />
                 <span>内容页右下角编号</span>
               </label>
-            </div>
-            <div className="field" style={{ width: 96 }}>
-              <label title="改一次，队列里所有文件的页数一起改（单个文件还能单独微调）">统一页数</label>
-              <input
-                type="number"
-                min={1}
-                value={defaultTarget}
-                title="改一次，队列里所有文件的页数一起改（单个文件还能单独微调）"
-                onChange={(e) => {
-                  const v = Math.max(1, +e.target.value || 1);
-                  setDefaultTarget(v);
-                  // 默认值联动：所有已添加文件的目标页数同步更新
-                  setRows((prev) => prev.map((r) => ({ ...r, targetPages: v })));
-                }}
-              />
             </div>
             <div className="field grow" style={{ minWidth: 220 }}>
               <label>输出文件名</label>

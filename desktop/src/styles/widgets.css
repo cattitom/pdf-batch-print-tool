@@ -196,6 +196,13 @@
   font-size: 11.5px;
   color: var(--muted);
 }
+/* 卡片头部的行内控件（如队列里的「统一页数」） */
+.card-head .ctl {
+  margin-left: 8px;
+}
+.card-head .ctl > input[type="number"] {
+  width: 54px;
+}
 .card-body {
   padding: 12px;
 }

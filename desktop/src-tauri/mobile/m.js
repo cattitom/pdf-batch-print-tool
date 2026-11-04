@@ -177,6 +177,8 @@
   function ticketHtml(t) {
     var s = stats(t.rows);
     var cust = t.rows[0].customer || "—";
+    // tickets() 把空单号兜底成「未识别单号」，所以要看行本身的单号，不能看 t.waybill
+    var noWb = !t.rows[0].waybill;
     return (
       '<article class="ticket ' +
       s.status +
@@ -191,11 +193,13 @@
       '">' +
       statusText(s.status) +
       "</span></span></div>" +
-      '<div class="t-meta">' +
-      esc(cust) +
-      " · 共 " +
-      s.total +
-      " 件</div>" +
+      '<div class="t-meta' +
+      (noWb ? " warn" : "") +
+      '">' +
+      (noWb
+        ? s.n + " 行没有单号，补单号后才能出货"
+        : esc(cust) + " · 共 " + s.total + " 件") +
+      "</div>" +
       '<div class="t-bar"><i style="width:' +
       s.pct +
       '%"></i></div>' +
@@ -367,9 +371,18 @@
     if (tick) tick.setAttribute("aria-pressed", String(r.checked));
   }
 
+  /** 告诉外壳现在是列表还是单据页：单据页底部有「确认出货」，右下角齿轮要躲开 */
+  function tellShell(name) {
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({ source: "shipping-mobile", type: "view", view: name }, "*");
+    } catch (e) {}
+  }
+
   function showDoc(w) {
     cur = w;
     view = "doc";
+    tellShell("doc");
     $viewList.classList.add("hidden");
     $viewDoc.classList.remove("hidden");
     window.scrollTo(0, 0);
@@ -382,6 +395,7 @@
   function showList() {
     cur = "";
     view = "list";
+    tellShell("list");
     $viewDoc.classList.add("hidden");
     $viewList.classList.remove("hidden");
     window.scrollTo(0, 0);
@@ -635,5 +649,4 @@
 
   load(true);
 })();
-
 

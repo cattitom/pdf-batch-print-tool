@@ -136,19 +136,111 @@
     box-shadow: 0 0 0 100vmax rgba(0,0,0,.45);
   }
   #scan-cancel { max-width: 200px; position: relative; z-index: 1; }
-  /* 连上以后右上角留一个很小的「换电脑」入口：否则记住自动连之后没有退路 */
-  #switch-pc {
-    position: fixed; z-index: 40; top: calc(env(safe-area-inset-top) + 8px); right: 10px;
-    width: 32px; height: 32px; padding: 0; border-radius: 50%;
-    background: rgba(0,0,0,.38); color: #fff; font-size: 14px; font-weight: 500;
+  .hide { display: none !important; }
+
+  /* 右下角悬浮设置入口：连上电脑后才出现，不占网页布局 */
+  #fab {
+    position: fixed; z-index: 50; right: 14px;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    background: rgba(255,255,255,.96); color: #5b646e;
+    border: 1px solid #e3e7ec; box-shadow: 0 6px 18px rgba(16,24,40,.14);
     display: flex; align-items: center; justify-content: center;
   }
-  .hide { display: none !important; }
+  #fab:active { background: #eef1f4; }
+  #fab svg { width: 19px; height: 19px; }
+
+  /* 设置页：盖在网页上的浅色全屏页，跟网页同一套观感 */
+  #settings {
+    position: fixed; inset: 0; z-index: 60; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #f1f3f5; color: #111418;
+    font: 15px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    padding: max(6px, env(safe-area-inset-top)) 0 28px;
+  }
+  .s-head { display: flex; align-items: center; padding: 8px 16px 12px; }
+  .s-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .s-done {
+    margin-left: auto; width: auto; padding: 6px 0 6px 12px;
+    background: none; color: #5b6470; font-size: 14px; font-weight: 500;
+  }
+  .s-group {
+    margin: 0 12px 14px; background: #fff; border: 1px solid #e3e7ec;
+    border-radius: 12px; overflow: hidden;
+  }
+  .s-big { padding: 14px 14px 13px; border-bottom: 1px solid #eef1f4; }
+  .s-k { font-size: 11.5px; color: #5b6470; }
+  .s-now { font-size: 15px; font-weight: 600; margin-top: 3px; }
+  .s-addr { font-size: 12px; color: #68717c; margin-top: 2px; }
+  .s-act { display: flex; gap: 8px; margin-top: 11px; }
+  .s-pill {
+    width: auto; border-radius: 9px; padding: 8px 13px; font-size: 13px; font-weight: 500;
+    background: #111418; color: #fff;
+  }
+  .s-pill.ghost { background: #eef1f4; color: #111418; }
+  .s-row {
+    display: flex; align-items: center; gap: 10px; padding: 13px 14px; font-size: 14px;
+  }
+  .s-row + .s-row { border-top: 1px solid #eef1f4; }
+  .s-row .k { color: #111418; }
+  .s-row .v { margin-left: auto; color: #68717c; font-size: 13px; max-width: 190px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .s-row .k.danger { color: #b32d2d; }
+  .s-row-tap:active { background: #f5f7f9; }
+  .s-switch {
+    margin-left: auto; width: 44px; height: 26px; padding: 0; border-radius: 13px;
+    background: #d5dae0; position: relative; border: 0;
+  }
+  .s-switch::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; transition: transform .18s;
+  }
+  .s-switch.on { background: #2f9e6f; }
+  .s-switch.on::after { transform: translateX(18px); }
+  .s-foot { text-align: center; font-size: 11.5px; color: #5b6470; padding: 4px 0 0; }
+
+  /* 离线清单：电脑连不上时的本地快照，勾选存本地，连上再回传 */
+  #local {
+    position: fixed; inset: 0; z-index: 70; overflow-y: auto;
+    -webkit-overflow-scrolling: touch; background: #f1f3f5; color: #111418;
+    font: 15px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    padding: max(6px, env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom));
+  }
+  .l-head { display: flex; align-items: center; padding: 8px 16px 4px; }
+  .l-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .l-head .x { margin-left: auto; width: auto; padding: 6px 0 6px 12px; background: none; color: #5b6470; font-size: 14px; font-weight: 500; }
+  .l-note { padding: 2px 16px 8px; font-size: 11.5px; color: #5b6470; }
+  .l-note b { color: #8a5210; }
+  /* 别用 flex：innerHTML 里的文本节点会各自成项，字号一粗一细就错位 */
+  .l-stats { display: block; padding: 0 16px 10px; font-size: 12px; color: #5b6470; }
+  .l-stats b { font-size: 19px; font-weight: 600; color: #111418; }
+  .l-ticket { margin: 0 12px 10px; background: #fff; border: 1px solid #e3e7ec; border-radius: 14px; overflow: hidden; }
+  .l-ticket .t { display: flex; align-items: center; gap: 8px; padding: 11px 13px 7px; font-size: 14px; font-weight: 600; }
+  .l-ticket .t .tag { margin-left: auto; font-size: 11px; font-weight: 400; padding: 2px 8px; border-radius: 999px; background: #fdf0dc; color: #8a5210; }
+  .l-line { display: flex; gap: 9px; align-items: flex-start; padding: 9px 13px; border-top: 1px solid #eef1f4; font-size: 13px; }
+  .l-line.on { color: #9aa3ad; }
+  .l-line.on .n { text-decoration: line-through; }
+  .l-box {
+    flex: none; width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid #c3c9d1;
+    margin-top: 1px; display: grid; place-items: center; font-size: 13px; color: #fff;
+  }
+  .l-line.on .l-box { background: #2f9e6f; border-color: #2f9e6f; }
+  .l-line .n { flex: 1; min-width: 0; }
+  .l-line .m { display: block; font-size: 11.5px; color: #68717c; margin-top: 2px; }
 </style>
 </head>
 <body>
 <iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
-<button id="switch-pc" class="hide" title="换电脑">⇄</button>
+
+<button id="fab" class="hide" aria-label="设置">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <circle cx="12" cy="12" r="3.2" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </svg>
+</button>
+
+<section id="settings" class="hide"></section>
+<section id="local" class="hide"></section>
 
 <div id="gate">
   <div class="panel">
@@ -209,7 +301,9 @@
 (function () {
   var view = document.getElementById('view');
   var gate = document.getElementById('gate');
-  var switchPc = document.getElementById('switch-pc');
+  var fab = document.getElementById('fab');
+  var settings = document.getElementById('settings');
+  var current = null; // 当前连着的电脑 { host, name, url }
   var el = {
     status: document.getElementById('status'),
     found: document.getElementById('found'),
@@ -282,21 +376,43 @@
     el.found.classList.toggle('hide', name !== 'found');
     el.notfound.classList.toggle('hide', name !== 'notfound');
     el.scanning.classList.toggle('hide', name !== 'scanning');
-    switchPc.classList.add('hide');
+    fab.classList.add('hide');
+    settings.classList.add('hide');
     gate.classList.remove('hide');
   }
 
+  var openTimer = 0;
+
   function leaveTo(url) {
-    view.onload = function () { gate.classList.add('hide'); };
+    clearTimeout(openTimer);
+    var opened = false;
+    view.onload = function () {
+      opened = true;
+      clearTimeout(openTimer);
+      gate.classList.add('hide');
+      // 每次连上都顺手存一份：断网/电脑关机时手机里还有一份能勾
+      pullSnapshot(url);
+    };
     view.src = url;
     view.style.display = 'block';
-    switchPc.classList.remove('hide');
+    fab.classList.remove('hide');
     // 网页首屏慢时也别一直白屏：先露出 iframe，加载完再收门帘
     setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1800);
+    // 右上角那个 ⇄ 按钮已经去掉（长按网页标题唤出），所以打不开时得自己把门帘收回来，
+    // 不然用户只能干瞪白屏，连换电脑的入口都没有
+    openTimer = setTimeout(function () {
+      if (opened || !view.src) return;
+      view.style.display = 'none';
+      view.removeAttribute('src');
+      showNotFound('网页一直没打开：确认手机和电脑在同一个 WiFi，或者换台电脑');
+      // 有本地快照就直接摊开，别让人干瞪眼
+      if (cache && cache.rows && cache.rows.length) openLocal();
+    }, 8000);
   }
 
   function searching() {
     lastPeer = null;
+    view.onload = null;
     view.style.display = 'none';
     view.removeAttribute('src');
     setState('search');
@@ -376,6 +492,7 @@
 
   function connectPeer(peer, remember) {
     if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
+    current = { host: peer.host, name: peer.name || '', url: peer.url };
     if (remember) {
       saveAuto({ host: peer.host, name: peer.name || '', url: peer.url });
     }
@@ -390,7 +507,8 @@
     try { u = new URL(url); } catch (e) { showNotFound('地址看不懂：' + url); return; }
     var host = u.hostname;
     if (!host) { showNotFound('地址里没有电脑 IP'); return; }
-    pushHistory({ host: host, name: (meta && meta.name) || '', url: u.href });
+    current = { host: host, name: (meta && meta.name) || '', url: u.href };
+    pushHistory(current);
     leaveTo(u.href);
   }
 
@@ -521,12 +639,286 @@
   el.ip.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') connectManual();
   });
-  switchPc.addEventListener('click', function () {
-    // 连上了想换一台：撤掉「下次直接连」，回到扫码/历史页
+  /** 连上了想换一台：撤掉「下次直接连」，回到扫码/历史页 */
+  function backToGate() {
+    clearTimeout(openTimer);
     clearAuto();
+    settings.classList.add('hide');
+    fab.classList.add('hide');
+    // 先摘掉 onload：撕 iframe 的 src 会触发一次 about:blank 的 load，
+    // 那个回调会把门帘再藏起来，结果就是「点了换电脑又什么都没发生」
+    view.onload = null;
     view.style.display = 'none';
     view.removeAttribute('src');
-    showNotFound('');
+    // 直接重扫一遍：用户点了「换电脑」就是要选另一台，别停在「没找到电脑」
+    boot();
+  }
+
+  // ---------------- 离线清单（电脑连不上时的本地快照） ----------------
+
+  var localView = document.getElementById('local');
+  var CACHE_KEY = 'shipping-shell.cache';
+  var PENDING_KEY = 'shipping-shell.pending';
+  var cache = readJSON(CACHE_KEY, null);
+  var pending = readJSON(PENDING_KEY, []);
+
+  function hm(ts) {
+    var d = new Date(ts);
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  /** 把远端 /api/sheet 存一份到本地：断网也能看、能勾 */
+  function pullSnapshot(url) {
+    if (!url) return Promise.resolve(false);
+    var u;
+    try { u = new URL(url); } catch (e) { return Promise.resolve(false); }
+    var token = u.searchParams.get('t') || '';
+    return fetch(u.origin + '/api/sheet?t=' + encodeURIComponent(token), { cache: 'no-store' })
+      .then(function (res) {
+        if (!res.ok) throw new Error('http ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        cache = { at: Date.now(), url: url, rows: data.rows || [] };
+        writeJSON(CACHE_KEY, cache);
+        return flushPending(u.origin, token);
+      })
+      .catch(function () { return false; });
+  }
+
+  /** 把离线勾过的推送回电脑；失败就留着下次再试 */
+  function flushPending(origin, token) {
+    if (!pending.length) return Promise.resolve(true);
+    var ops = pending.slice();
+    return Promise.all(ops.map(function (op) {
+      return fetch(origin + '/api/check?t=' + encodeURIComponent(token), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(op)
+      }).then(function (res) {
+        if (!res.ok) throw new Error('http ' + res.status);
+        pending = pending.filter(function (p) { return p !== op; });
+        writeJSON(PENDING_KEY, pending);
+      }).catch(function () {});
+    })).then(function () { return true; });
+  }
+
+  function openLocal() {
+    renderLocal();
+    localView.classList.remove('hide');
+  }
+
+  function toggleLocal(waybill, row) {
+    row.checked = !row.checked;
+    writeJSON(CACHE_KEY, cache);
+    pending = pending.filter(function (p) {
+      return !(p.waybill === waybill && p.inbound === row.inbound && p.name === row.name);
+    });
+    pending.push({ waybill: waybill, inbound: row.inbound, name: row.name, checked: !!row.checked });
+    writeJSON(PENDING_KEY, pending);
+    renderLocal();
+  }
+
+  function renderLocal() {
+    localView.innerHTML = '';
+
+    var head = mk('div', 'l-head');
+    head.appendChild(mk('h2', '', '离线清单'));
+    var x = mk('button', 'x', '关闭');
+    x.addEventListener('click', function () { localView.classList.add('hide'); });
+    head.appendChild(x);
+    localView.appendChild(head);
+
+    if (!cache || !cache.rows || !cache.rows.length) {
+      localView.appendChild(mk('div', 'l-note', '还没有缓存：先连一次电脑，清单会自动存到手机上。'));
+      return;
+    }
+
+    var note = mk('div', 'l-note');
+    note.innerHTML = '数据截至 <b>' + hm(cache.at) + '</b> · 断网也能勾，连上电脑自动回传';
+    localView.appendChild(note);
+
+    var done = 0;
+    var total = 0;
+    var order = [];
+    var groups = {};
+    cache.rows.forEach(function (r) {
+      var qty = Number(r.qty) || 0;
+      total += qty;
+      if (r.checked) done += qty;
+      var wb = r.waybill || '未识别单号';
+      if (!groups[wb]) { groups[wb] = []; order.push(wb); }
+      groups[wb].push(r);
+    });
+
+    var stats = mk('div', 'l-stats');
+    stats.innerHTML = '已出 <b>' + done + '</b> 件　未出 <b>' + (total - done) + '</b> 件';
+    localView.appendChild(stats);
+
+    order.forEach(function (wb) {
+      var list = groups[wb];
+      var left = list.reduce(function (n, r) { return n + (Number(r.qty) || 0); }, 0);
+      var card = mk('div', 'l-ticket');
+      var top = mk('div', 't');
+      top.appendChild(mk('span', '', wb));
+      top.appendChild(mk('span', 'tag', left + ' 件'));
+      card.appendChild(top);
+      list.forEach(function (r) {
+        var line = mk('div', 'l-line' + (r.checked ? ' on' : ''));
+        var box = mk('span', 'l-box', r.checked ? '✓' : '');
+        line.appendChild(box);
+        var body = mk('span', 'n', r.name);
+        body.appendChild(mk('span', 'm', (Number(r.qty) || 0) + ' 件 · ' + (r.inbound || '无入库号')));
+        line.appendChild(body);
+        line.addEventListener('click', function () { toggleLocal(wb, r); });
+        card.appendChild(line);
+      });
+      localView.appendChild(card);
+    });
+  }
+
+  // ---------------- 设置页（右下角 ⚙ 打开） ----------------
+
+  function mk(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function closeSettings() {
+    settings.classList.add('hide');
+  }
+
+  function renderSettings() {
+    settings.innerHTML = '';
+
+    var head = mk('div', 's-head');
+    head.appendChild(mk('h2', '', '设置'));
+    var done = mk('button', 's-done', '完成');
+    done.addEventListener('click', closeSettings);
+    head.appendChild(done);
+    settings.appendChild(head);
+
+    // 电脑：当前连的这台 + 换/重连
+    var group = mk('div', 's-group');
+    var big = mk('div', 's-big');
+    big.appendChild(mk('div', 's-k', '当前电脑'));
+    big.appendChild(mk('div', 's-now', current ? current.name || '电脑' : '未连接'));
+    big.appendChild(mk('div', 's-addr', current ? current.host + ' · 出货助手' : ''));
+    var act = mk('div', 's-act');
+    var swap = mk('button', 's-pill', '换一台电脑');
+    swap.addEventListener('click', backToGate);
+    var relink = mk('button', 's-pill ghost', '重连');
+    relink.addEventListener('click', function () {
+      closeSettings();
+      if (current) {
+        view.onload = function () {
+          gate.classList.add('hide');
+          // 重连上就把离线期间勾的推回去
+          pullSnapshot(current.url);
+        };
+        view.src = current.url;
+      }
+    });
+    act.appendChild(swap);
+    act.appendChild(relink);
+    big.appendChild(act);
+    group.appendChild(big);
+
+    var auto = loadAuto();
+    var isAuto = !!(auto && current && auto.host === current.host);
+    var rowAuto = mk('div', 's-row');
+    rowAuto.appendChild(mk('span', 'k', '下次自动连这台'));
+    var sw = mk('button', 's-switch' + (isAuto ? ' on' : ''), '');
+    sw.setAttribute('aria-label', '下次自动连这台');
+    sw.addEventListener('click', function () {
+      var a = loadAuto();
+      if (a && current && a.host === current.host) clearAuto();
+      else if (current) saveAuto({ host: current.host, name: current.name || '', url: current.url });
+      renderSettings();
+    });
+    rowAuto.appendChild(sw);
+    group.appendChild(rowAuto);
+    settings.appendChild(group);
+
+    // 离线清单：手机里存的那份快照
+    if (cache && cache.rows && cache.rows.length) {
+      var gLocal = mk('div', 's-group');
+      var rLocal = mk('div', 's-row s-row-tap');
+      rLocal.appendChild(mk('span', 'k', '离线清单'));
+      rLocal.appendChild(mk('span', 'v', '截至 ' + hm(cache.at)));
+      rLocal.addEventListener('click', function () {
+        closeSettings();
+        openLocal();
+      });
+      gLocal.appendChild(rLocal);
+      if (pending.length) {
+        var rPend = mk('div', 's-row');
+        rPend.appendChild(mk('span', 'k', '待回传勾选'));
+        rPend.appendChild(mk('span', 'v', pending.length + ' 条 · 连上电脑自动推'));
+        gLocal.appendChild(rPend);
+      }
+      settings.appendChild(gLocal);
+    }
+
+    // 连接历史：点一下直接换过去
+    var hist = loadHistory();
+    if (hist.length) {
+      var gHist = mk('div', 's-group');
+      var title = mk('div', 's-row');
+      title.appendChild(mk('span', 'k', '连接历史'));
+      title.appendChild(mk('span', 'v', hist.length + ' 台'));
+      gHist.appendChild(title);
+      hist.slice(0, 4).forEach(function (item) {
+        var r = mk('div', 's-row s-row-tap');
+        r.appendChild(mk('span', 'k', item.host));
+        r.appendChild(mk('span', 'v', timeText(item.last)));
+        r.addEventListener('click', function () {
+          closeSettings();
+          searching();
+          connectHistory(item);
+        });
+        gHist.appendChild(r);
+      });
+      settings.appendChild(gHist);
+    }
+
+    // 其他
+    var gOther = mk('div', 's-group');
+    var about = mk('div', 's-row');
+    about.appendChild(mk('span', 'k', '出货助手版本'));
+    about.appendChild(mk('span', 'v', '0.1.0'));
+    gOther.appendChild(about);
+    if (hist.length) {
+      var clr = mk('div', 's-row s-row-tap');
+      clr.appendChild(mk('span', 'k danger', '清空连接记录'));
+      clr.addEventListener('click', function () {
+        if (!confirm('清空连接历史？')) return;
+        try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+        renderSettings();
+      });
+      gOther.appendChild(clr);
+    }
+    settings.appendChild(gOther);
+    settings.appendChild(mk('div', 's-foot', '手机上只读，改单在电脑上'));
+  }
+
+  function openSettings() {
+    if (!current) { showNotFound('还没连上电脑，先连一台'); return; }
+    renderSettings();
+    settings.classList.remove('hide');
+  }
+
+  fab.addEventListener('click', openSettings);
+
+  // 网页报告自己切到了单据页就收起齿轮：单据页底部整条是「确认出货」，别挡住。
+  window.addEventListener('message', function (e) {
+    var d = e && e.data;
+    if (!d || typeof d !== 'object' || d.source !== 'shipping-mobile') return;
+    if (d.type !== 'view') return;
+    if (d.view === 'doc') fab.classList.add('hide');
+    else if (view.src) fab.classList.remove('hide');
   });
   document.addEventListener('visibilitychange', function () {
     // 从后台切回来、还没连上就再找一次；

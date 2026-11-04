@@ -221,7 +221,8 @@ h1 {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 10px 12px calc(28px + env(safe-area-inset-bottom));
+  /* 底部多留 44px：外壳右下角的设置齿轮会压住最后一张票 */
+  padding: 10px 12px calc(72px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -435,6 +436,10 @@ h1 {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+/* 没单号的那堆：说明白为什么领不了，别让人猜 */
+.t-meta.warn {
+  color: #9a6a1f;
 }
 .t-bar {
   height: 5px;
@@ -661,5 +666,4 @@ h1 {
 .btn-primary:disabled {
   opacity: 0.4;
 }
-
 
