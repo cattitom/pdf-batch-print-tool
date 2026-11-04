@@ -30,11 +30,24 @@ if not exist "node_modules" (
 )
 
 rem ---------- 2. 程序是否正在运行（占用 exe 会让打包失败）----------
-tasklist /fi "imagename eq desktop.exe" 2>nul | find /i "desktop.exe" >nul
+tasklist /fi "imagename eq desktop.exe" 2>nul | findstr /i "desktop.exe" >nul
 if not errorlevel 1 (
   echo [错误] desktop.exe 正在运行，请先关闭程序再打包。
   goto :fail
 )
+
+rem ---------- sccache：Rust 编译缓存（程序放 D 盘，缓存也放 D 盘） ----------
+set "RUSTC_WRAPPER=D:\tools\sccache\sccache.exe"
+set "SCCACHE_DIR=D:\sccache-cache"
+if exist "%RUSTC_WRAPPER%" (
+  if not exist "%SCCACHE_DIR%" mkdir "%SCCACHE_DIR%"
+  "%RUSTC_WRAPPER%" --start-server >nul 2>nul
+  echo [sccache] 已启用  %RUSTC_WRAPPER%
+) else (
+  echo [sccache] 没找到，这次不缓存
+  set "RUSTC_WRAPPER="
+)
+echo.
 
 rem ---------- 3. 打包 ----------
 echo [1/2] 前端构建 + Rust 编译 + 安装包（thin LTO：改代码增量约 1.5-2 分钟；首次或换依赖 5-8 分钟）...
