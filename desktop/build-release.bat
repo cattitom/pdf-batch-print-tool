@@ -37,7 +37,7 @@ if not errorlevel 1 (
 )
 
 rem ---------- 3. 打包 ----------
-echo [1/2] 前端构建 + Rust 编译 + 安装包（LTO 全量编译，约 3-8 分钟）...
+echo [1/2] 前端构建 + Rust 编译 + 安装包（thin LTO：改代码增量约 1.5-2 分钟；首次或换依赖 5-8 分钟）...
 echo       默认只出 NSIS 安装包；额外参数透传，例如: build-release.bat --bundles msi
 echo.
 call pnpm tauri build %*

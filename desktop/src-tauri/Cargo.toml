@@ -70,10 +70,13 @@ windows-future = "0.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# 打包速度优先：fat LTO + 单 codegen unit 在这棵依赖树上要 3-8 分钟，
+# 改一行手机页文案（m.js 是 include_str! 编进去的）就得重新 fat link 一次，太亏。
+# thin LTO + 16 个 codegen unit：链接快 2-3 倍，体积大约 +10%，内部工具无所谓。
 [profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
+codegen-units = 16
+lto = "thin"
+opt-level = 2
 panic = "abort"
 strip = true
 
