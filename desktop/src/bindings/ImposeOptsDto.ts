@@ -4,4 +4,8 @@ export type ImposeOptsDto = { sepPages: number, sepText: string | null,
 /**
  * 每个文件的内容页盖页码「文件号-页/该文件页数」
  */
-pageNumbers: boolean, };
+pageNumbers: boolean, 
+/**
+ * 每页连续印几份（1 = 不重复）：箱子标签常要一箱两份，3 页 × 2 份 = 1,1,2,2,3,3
+ */
+copies: number, };

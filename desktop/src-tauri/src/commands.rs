@@ -121,6 +121,8 @@ pub struct ImposeOptsDto {
     pub sep_text: Option<String>,
     /// 每个文件的内容页盖页码「文件号-页/该文件页数」
     pub page_numbers: bool,
+    /// 每页连续印几份（1 = 不重复）：箱子标签常要一箱两份，3 页 × 2 份 = 1,1,2,2,3,3
+    pub copies: u32,
 }
 
 #[derive(Debug, Serialize, ts_rs::TS)]
@@ -196,12 +198,14 @@ pub fn impose_pdfs(
         sep_pages: opts.sep_pages,
         sep_text: opts.sep_text,
         page_numbers: opts.page_numbers,
+        copies: opts.copies.max(1),
     };
 
     log::info!(
-        "拼版开始：{} 个文件，分隔页 {}，页码 {}",
+        "拼版开始：{} 个文件，分隔页 {}，每页 {} 份，页码 {}",
         inputs.len(),
         core_opts.sep_pages,
+        core_opts.copies,
         core_opts.page_numbers
     );
     let t0 = std::time::Instant::now();

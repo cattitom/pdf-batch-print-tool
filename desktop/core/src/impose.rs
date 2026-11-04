@@ -78,15 +78,30 @@ impl FileInput {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ImposeOptions {
-
     /// 每个文件（第一个除外）前插入的分隔页数量
     pub sep_pages: u32,
     /// 分隔页文字，默认「这是分隔线」
     pub sep_text: Option<String>,
     /// 在每个文件的内容页右下角盖页码 1,2,3…（每个文件重新从 1 开始，分隔页不编号）
     pub page_numbers: bool,
+    /// 每页连续重复 N 份（1 = 不重复）。
+    ///
+    /// 与「页数」的分工：页数是这份文件出几页（超出就整份轮转凑页），
+    /// copies 是把**每一页**再印几份。3 页 × 2 份 = 1,1,2,2,3,3（箱子标签要一箱两份）。
+    pub copies: u32,
+}
+
+impl Default for ImposeOptions {
+    fn default() -> Self {
+        Self {
+            sep_pages: 0,
+            sep_text: None,
+            page_numbers: false,
+            copies: 1,
+        }
+    }
 }
 
 pub use crate::error::ImposeResult;
@@ -122,7 +137,11 @@ pub fn impose_to<W: Write>(
     let t0 = Instant::now();
 
     // 进度总量只取决于请求页数，无需先解析一遍源文件
-    let mut total: usize = inputs.iter().map(|i| (i.target_pages as usize).max(1)).sum();
+    let copies = opts.copies.max(1) as usize;
+    let mut total: usize = inputs
+        .iter()
+        .map(|i| (i.target_pages as usize).max(1) * copies)
+        .sum();
     if inputs.len() > 1 && opts.sep_pages > 0 {
         total += opts.sep_pages as usize * (inputs.len() - 1);
     }
@@ -187,9 +206,9 @@ pub fn impose_to<W: Write>(
         // 内容页（页码按文件重新从 1 开始计数）
         let mut map: HashMap<ObjectId, ObjectId> = HashMap::new();
         let need = (input.target_pages as usize).max(1);
-        for k in 0..need {
-            // 循环复制：凑页时按整个文档轮转（与 Streamlit 版一致），截取时天然只取前 N 页
-            let pid = page_ids[k % page_ids.len()];
+        for k in 0..(need * copies) {
+            // 每页先连印 copies 份（1,1,2,2,3,3），再按整个文档轮转凑页
+            let pid = page_ids[(k / copies) % page_ids.len()];
             let (nid, w, h) =
                 add_content_page(&mut dst, &src, pid, &mut map, input, crop_rect_first)?;
             kids.push(Object::Reference(nid));
@@ -513,6 +532,14 @@ mod tests {
         doc.get_pages().len()
     }
 
+    /// 每页的内容流，用来判断「哪一页是哪一页」（同源页复制出来的流字节相同）。
+    fn page_streams(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let doc = Document::load_mem(bytes).unwrap();
+        doc.page_iter()
+            .map(|id| doc.get_page_content(id))
+            .collect()
+    }
+
     #[test]
     fn impose_counts_and_separators() {
         // 2 + 4 + 6 = 12 内容页 + 2 个间隔 × 1 张分隔页 = 14 页
@@ -545,6 +572,7 @@ mod tests {
                 sep_pages: 1,
                 sep_text: None,
                 page_numbers: false,
+                copies: 1,
             },
             &|_, _| {},
         )
@@ -558,6 +586,7 @@ mod tests {
                 sep_pages: 1,
                 sep_text: None,
                 page_numbers: true,
+                copies: 1,
             },
             &|_, _| {},
         )
@@ -601,6 +630,7 @@ mod tests {
                 sep_pages: 0,
                 sep_text: None,
                 page_numbers: false,
+                copies: 1,
             },
             &|_, _| {},
         )
@@ -631,6 +661,56 @@ mod tests {
         } else {
             panic!("页面不是字典");
         }
+    }
+
+    /// 箱子标签要一箱两份：3 页 × 每页 2 份 → 1,1,2,2,3,3（不是整份轮转的 1,2,3,1,2,3）。
+    #[test]
+    fn copies_repeat_each_page_consecutively() {
+        let inputs = vec![FileInput {
+            name: "C".into(),
+            source: Source::Bytes(fixture("ORDER-B-4页.pdf")),
+            target_pages: 3,
+            rotate: 0,
+            crop: None,
+        }];
+        let out = impose(
+            &inputs,
+            &ImposeOptions { copies: 2, ..Default::default() },
+            &|_, _| {},
+        )
+        .unwrap();
+        assert_eq!(count_pages(&out), 6, "3 页 × 2 份 = 6 页");
+
+        let s = page_streams(&out);
+        assert_eq!(s[0], s[1], "第 1、2 页应是同一页");
+        assert_eq!(s[2], s[3], "第 3、4 页应是同一页");
+        assert_eq!(s[4], s[5], "第 5、6 页应是同一页");
+        assert_ne!(s[0], s[2], "第 1 页和第 2 页必须不同");
+        assert_ne!(s[2], s[4], "第 2 页和第 3 页必须不同");
+    }
+
+    /// 份数与「页数」叠加：凑页轮转时每页也要各印 copies 份。
+    #[test]
+    fn copies_combine_with_padding() {
+        let inputs = vec![FileInput {
+            name: "C".into(),
+            source: Source::Bytes(fixture("ORDER-B-4页.pdf")),
+            target_pages: 6,
+            rotate: 0,
+            crop: None,
+        }];
+        let out = impose(
+            &inputs,
+            &ImposeOptions { copies: 2, ..Default::default() },
+            &|_, _| {},
+        )
+        .unwrap();
+        assert_eq!(count_pages(&out), 12, "6 页 × 2 份 = 12 页");
+        let s = page_streams(&out);
+        // 4 页源轮转凑到 6 页：0,1,2,3,0,1；再每页两份
+        assert_eq!(s[0], s[1]);
+        assert_eq!(s[2], s[3]);
+        assert_eq!(s[8], s[0], "第 6 页（索引 5）又轮到源第 1 页");
     }
 
     #[test]

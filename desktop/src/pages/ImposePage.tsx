@@ -81,7 +81,7 @@ function rangeText(start: number, count: number): string {
 }
 
 /** 拼版排布：横向卡片流（文件 / 分隔页 / 页码区间），改设置即时重算。 */
-function SequenceBar({ rows, sepPages }: { rows: FileRow[]; sepPages: number }) {
+function SequenceBar({ rows, sepPages, copies }: { rows: FileRow[]; sepPages: number; copies: number }) {
   let cursor = 1;
   let contentTotal = 0;
   let sepTotal = 0;
@@ -100,7 +100,8 @@ function SequenceBar({ rows, sepPages }: { rows: FileRow[]; sepPages: number }) 
         </div>
       );
     }
-    const n = Math.max(1, r.targetPages);
+    // 每页连印 copies 份，所以实际输出页数是 页数 × 份数
+    const n = Math.max(1, r.targetPages) * Math.max(1, copies);
     const rng = rangeText(cursor, n);
     cursor += n;
     contentTotal += n;
@@ -109,6 +110,7 @@ function SequenceBar({ rows, sepPages }: { rows: FileRow[]; sepPages: number }) 
     if (r.rotate) badges.push(`旋转 ${r.rotate}°`);
     if (r.cropMode === "auto") badges.push("去白边");
     if (r.cropMode === "manual") badges.push("手动裁剪");
+    if (copies > 1) badges.push(`每页 ${copies} 份`);
 
     parts.push(
       <div className="sq-item" key={r.uid}>
@@ -165,6 +167,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
   const [rows, setRows] = useState<FileRow[]>([]);
   const [defaultTarget, setDefaultTarget] = useState(1);
   const [sepPages, setSepPages] = useState(1);
+  const [copies, setCopies] = useState(1);
   const [sepText, setSepText] = useState("这是分隔线");
   const [pageNum, setPageNum] = useState(false);
   const [outputName, setOutputName] = useState("批量打印.pdf");
@@ -270,6 +273,8 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         sepPages: 0,
         sepText: null,
         pageNumbers: pageNum,
+        // 预览也按同样的份数排，看到的就是印出来的顺序
+        copies: Math.max(1, copies),
       };
       const res = await api.imposePdfs(files, opts, tmp);
       const imgs = await api.previewPdf(res.path, 150, 6);
@@ -321,6 +326,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         sepPages,
         sepText: sepPages > 0 ? sepText : null,
         pageNumbers: pageNum,
+        copies: Math.max(1, copies),
       };
 
       const res = await api.imposePdfs(files, opts, outPath);
@@ -349,7 +355,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
   };
 
   const inputPages = rows.reduce((a, r) => a + r.pages, 0);
-  const contentPages = rows.reduce((a, r) => a + Math.max(1, r.targetPages), 0);
+  const contentPages = rows.reduce((a, r) => a + Math.max(1, r.targetPages) * Math.max(1, copies), 0);
   const sepTotal = rows.length > 1 ? (rows.length - 1) * sepPages : 0;
 
   return (
@@ -498,15 +504,12 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
                   </div>
                   <div className="file-index">{idx + 1}</div>
                   <div className="file-main">
-                    <div className="file-name" title={r.path}>
+                    <div className="file-name" title={r.name}>
                       {r.name}
                     </div>
                     <div className="file-meta">
                       <span>
                         原 {r.pages} 页 · {r.widthMm}×{r.heightMm} mm
-                      </span>
-                      <span className="file-dir" title={r.path}>
-                        {r.path.slice(0, Math.max(0, r.path.lastIndexOf("\\")))}
                       </span>
                     </div>
                   </div>
@@ -629,6 +632,17 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
                 title="分隔页上印的文字"
               />
             </div>
+            <div className="field" style={{ width: 96 }}>
+              <label>每页份数</label>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={copies}
+                title="每页连印几份：页数 3、份数 2 → 1 1 2 2 3 3（箱子标签一箱两份）"
+                onChange={(e) => setCopies(Math.min(20, Math.max(1, +e.target.value || 1)))}
+              />
+            </div>
             <div className="field" style={{ width: 168 }}>
               <label>页码</label>
               <label className="check-line">
@@ -651,7 +665,7 @@ export default function ImposePage({ pendingDrop }: { pendingDrop?: { paths: str
         </div>
       </section>
 
-      {rows.length > 0 && <SequenceBar rows={rows} sepPages={sepPages} />}
+      {rows.length > 0 && <SequenceBar rows={rows} sepPages={sepPages} copies={copies} />}
 
       {/* 进度 / 结果 */}
       {busy && progress && (

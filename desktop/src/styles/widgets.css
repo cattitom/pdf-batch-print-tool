@@ -452,16 +452,6 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.file-dir {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 11px;
-  max-width: 340px;
-  direction: rtl;
-  text-align: left;
-}
 .file-controls {
   display: flex;
   align-items: center;
