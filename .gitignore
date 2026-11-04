@@ -66,3 +66,6 @@ desktop/core/examples/waybill_check.rs
 
 # 本地生成的飞书/豆包清单样本
 feishu-sample/
+
+# 自签用 IPA
+*.ipa

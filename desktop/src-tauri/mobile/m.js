@@ -230,7 +230,7 @@
     });
   }
 
-  // 搜索时直接出「行级」结果：输入入库号 / 单号 / 商品都能看到具体是哪些货
+  // 搜索时按「票」归组：一个单号一个父节点，行挂在下面；没单号的并成最后一组
   function renderSearch() {
     var hits = rows.filter(function (r) {
       return (r.name + " " + r.inbound + " " + r.waybill + " " + r.customer)
@@ -242,18 +242,59 @@
         '<div class="empty">没有匹配的货<br/>换个单号 / 入库号 / 商品名试试</div>';
       return;
     }
+
+    var groups = {};
+    var order = [];
+    hits.forEach(function (r) {
+      var w = r.waybill || "未识别单号";
+      if (!groups[w]) {
+        groups[w] = [];
+        order.push(w);
+      }
+      groups[w].push(r);
+    });
+    // 没单号的那堆永远排最后：它是「待补单号」，不是一票正常货
+    order.sort(function (a, b) {
+      var ua = a === "未识别单号";
+      var ub = b === "未识别单号";
+      if (ua !== ub) return ua ? 1 : -1;
+      return 0;
+    });
+
     $tickets.innerHTML =
-      '<div class="hits">找到 ' + hits.length + ' 行</div>' +
-      hits
-        .map(function (r) {
+      '<div class="hits">找到 ' +
+      hits.length +
+      " 行 · 归到 " +
+      order.length +
+      " 个组</div>" +
+      order
+        .map(function (w) {
+          var list = groups[w];
+          var s = stats(list);
+          var noWb = w === "未识别单号";
           return (
-            '<div class="hit" data-w="' +
-            esc(r.waybill || "未识别单号") +
-            '"><div class="hit-w mono">' +
-            esc(r.waybill || "未识别单号") +
-            "</div>" +
-            lineHtml(r) +
-            "</div>"
+            '<article class="hit" data-w="' +
+            esc(w) +
+            '">' +
+            '<div class="hit-head"><span class="hit-w mono">' +
+            esc(w) +
+            '</span><span class="hit-cnt">' +
+            list.length +
+            " 行 · " +
+            s.total +
+            ' 件</span><span class="tag ' +
+            (s.status === "done" ? "ok" : s.status === "part" ? "part" : "") +
+            '">' +
+            statusText(s.status) +
+            "</span></div>" +
+            (noWb ? '<div class="hit-tip">这批没有单号，补单号后才能出货</div>' : "") +
+            '<div class="hit-kids">' +
+            list
+              .map(function (r) {
+                return lineHtml(r);
+              })
+              .join("") +
+            "</div></article>"
           );
         })
         .join("");
