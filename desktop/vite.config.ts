@@ -33,7 +33,9 @@ export default defineConfig(() => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Rust 编译产物（core/target、src-tauri/target）也要排除：链接器占着 .exe/.pdb 时
+      // watcher 会疯狂报 EBUSY，还会把 target 目录当成源码变更反复触发。
+      ignored: ["**/src-tauri/**", "**/core/target/**", "**/target/**"],
     },
   },
 }));
