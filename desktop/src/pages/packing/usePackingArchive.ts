@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { withArchiveRows } from "./archiveRows";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../../api";
 import type { PackingItemDto } from "../../bindings/PackingItemDto";
 
@@ -10,11 +11,18 @@ const itemKey = (r: PackingItemDto) => JSON.stringify([r.inbound.trim(), r.name.
 export function usePackingArchive(rows: PackingItemDto[]) {
   const queue = useRef(Promise.resolve());
   const [archiveItems, setArchiveItems] = useState<PackingItemDto[]>([]);
+  // 启动恢复的异步回调可能来自首帧，必须通过 ref 读取已加载的最新存档。
+  const archiveItemsRef = useRef<PackingItemDto[]>([]);
+  const mergeArchiveRows = useCallback((current: PackingItemDto[], savedChecks: Record<string, boolean> = {}) =>
+    withArchiveRows(current, archiveItemsRef.current, savedChecks), []);
   useEffect(() => {
     let cancelled = false;
     api.allSettings().then((settings) => {
       const tickets = Object.entries(settings).filter(([key]) => key.startsWith(PREFIX)).map(([, value]) => JSON.parse(value) as ArchivedTicket);
-      if (!cancelled) setArchiveItems(tickets.flatMap((t) => t.items));
+      if (!cancelled) {
+        archiveItemsRef.current = tickets.flatMap((t) => t.items);
+        setArchiveItems(archiveItemsRef.current);
+      }
     }).catch((e) => { if (!cancelled) setArchiveError(`读取历史存档失败：${errorText(e)}`); });
     return () => { cancelled = true; };
   }, []);
@@ -25,7 +33,7 @@ export function usePackingArchive(rows: PackingItemDto[]) {
       const waybill = row.waybill.trim();
       if (!waybill) continue;
       const list = grouped.get(waybill) ?? [];
-      list.push({ ...row, waybill, issues: row.issues.filter((c) => c !== "history_archive") });
+      list.push({ ...row, waybill, issues: row.issues.filter((c) => c !== "history_archive" && c !== "waybill_archive") });
       grouped.set(waybill, list);
     }
     if (!grouped.size) return;
@@ -47,6 +55,7 @@ export function usePackingArchive(rows: PackingItemDto[]) {
         const items = [...merged.values()];
         if (JSON.stringify(previous?.items) === JSON.stringify(items)) continue;
         await api.setSetting(key, JSON.stringify({ waybill, updatedAt: new Date().toISOString(), items }));
+        archiveItemsRef.current = [...archiveItemsRef.current.filter((r) => r.waybill.trim() !== waybill), ...items];
       }
       setArchiveError(null);
     }).catch((error) => { setArchiveError(`出货档案保存失败：${errorText(error)}`); });
@@ -58,5 +67,5 @@ export function usePackingArchive(rows: PackingItemDto[]) {
       .map(([, value]) => JSON.parse(value) as ArchivedTicket)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   };
-  return { archiveError, readArchive, archiveItems };
+  return { archiveError, readArchive, archiveItems, mergeArchiveRows };
 }

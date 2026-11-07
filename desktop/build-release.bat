@@ -15,7 +15,11 @@ if not exist "node_modules" (
 )
 node scripts/release.mjs %*
 if errorlevel 1 goto :fail
-start "" explorer "%CD%\src-tauri\target\release"
+set "INSTALLER_DIR=%CD%\src-tauri\target\release\installers\PdfBatchPrint"
+echo.
+echo Installer folder: %INSTALLER_DIR%
+start "" explorer "%INSTALLER_DIR%"
+pause
 exit /b 0
 :fail
 echo 构建失败，请查看上方错误信息。

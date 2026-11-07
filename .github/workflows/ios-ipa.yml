@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: 打入手机本地清单页面
+        run: node ios-shell/scripts/sync-mobile.mjs
+
       - name: 安装 Tauri CLI
         run: npm i -g "@tauri-apps/cli@^2.12.4"
 

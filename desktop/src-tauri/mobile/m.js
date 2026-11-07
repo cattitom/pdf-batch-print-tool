@@ -1,7 +1,11 @@
+if (window.parent && window.parent !== window) document.documentElement.classList.add("in-shell");
 /* 手机出货（A 方案）：票列表 → 单据页（单据头 + 行项目 + 确认出货）。无框架。 */
 (function () {
   "use strict";
 
+  var transport = window.shippingTransport;
+  var apiFetch = function (path, options) { return transport ? transport.request(path, options) : fetch(url(path), options); };
+  function syncText() { return transport && transport.status() || nowText(); }
   var TOKEN = new URLSearchParams(location.search).get("t") || "";
   var CHECK =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
@@ -188,6 +192,7 @@
       '<div class="t-top"><span class="t-no mono">' +
       (taskOf(t) ? '<b class="t-task">' + esc(taskOf(t)) + "</b> " : "") +
       esc(t.waybill) +
+      (t.rows.some(function (r) { return (r.issues || []).some(function (c) { return c === "history_archive" || c === "waybill_archive"; }); }) ? ' <span class="tag archive">含存档</span>' : "") +
       '</span><span class="t-tag"><span class="tag ' +
       (s.status === "done" ? "ok" : s.status === "part" ? "part" : "") +
       '">' +
@@ -309,8 +314,8 @@
     if (!list.length) {
       $tickets.innerHTML =
         '<div class="empty">' +
-        (rows.length ? "这个筛选下没有票" : "电脑上还没打开表格") +
-        "<br/>回电脑端选一个文件，这里会自动同步</div>";
+        (rows.length ? "这个筛选下没有票" : (transport ? "手机里还没有清单" : "电脑上还没打开表格")) +
+        (transport ? "<br/>在顶部设置中配对电脑，首次同步后即可离线查看</div>" : "<br/>回电脑端选一个文件，这里会自动同步</div>");
       return;
     }
     $tickets.innerHTML = list.map(ticketHtml).join("");
@@ -327,7 +332,7 @@
       '<button class="tick" aria-pressed="' +
       r.checked +
       '" aria-label="标记已出"' +
-      (!r.checked && r.blocked ? ' disabled title="没有入库号也没有单号，不能出货"' : "") +
+      (!r.checked && r.blocked ? ' disabled title="入库号和单号必须都填写，才能出货"' : "") +
       ">" +
       CHECK +
       "</button>" +
@@ -445,7 +450,8 @@
   }
 
   function fetchSheet() {
-    return fetch(url("/api/sheet"), { cache: "no-store" }).then(function (res) {
+    if (transport) return transport.sheet();
+    return apiFetch("/api/sheet", { cache: "no-store" }).then(function (res) {
       if (res.status === 403) throw new Error("forbidden");
       if (!res.ok) throw new Error("http " + res.status);
       return res.json();
@@ -481,18 +487,19 @@
     fetchSheet()
       .then(function (data) {
         applyRows(data.rows || []);
-        setSync(nowText());
+        setSync(syncText());
       })
       .catch(function (e) {
         setSync(
-          e.message === "forbidden" ? "链接失效，回电脑重新扫码" : "连接断开 · 点右上角刷新",
+          e.message === "forbidden" ? "链接失效，回电脑重新扫码" : (transport ? e.message : "连接断开 · 点右上角刷新"),
           true
         );
       });
   }
 
   function postCheck(r, checked) {
-    return fetch(url("/api/check"), {
+    if (transport) return transport.check(r, checked).then(function (result) { if (!result.offline) r.version += 1; });
+    return apiFetch("/api/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -517,6 +524,7 @@
       }
     }
     if (!r || saving[k]) return;
+    if (!r.checked && (!String(r.waybill || "").trim() || !String(r.inbound || "").trim())) { toast("入库号和单号必须都填写，才能出货"); return; }
     var next = !r.checked;
     r.checked = next;
     saving[k] = true;
@@ -526,7 +534,7 @@
 
     postCheck(r, next)
       .then(function () {
-        setSync(nowText());
+        setSync(syncText());
       })
       .catch(function (error) {
         r.checked = !next;
@@ -544,7 +552,7 @@
   function receive() {
     var list = docRows();
     var pending = list.filter(function (r) {
-      return !r.checked && !r.blocked; // 没入库号/单号的跳过，勾不动
+      return !r.checked && !r.blocked && String(r.waybill || "").trim() && String(r.inbound || "").trim(); // 没入库号/单号的跳过，勾不动
     });
     if (pending.length && !confirm("还有 " + pending.length + " 行没勾，确认全部标记为已出？")) {
       return;
@@ -562,8 +570,8 @@
     chain
       .then(function () {
         updateDocNumbers();
-        toast("本票已确认出货");
-        setSync(nowText());
+        toast(transport && transport.status() ? transport.status() : "本票已确认出货");
+        setSync(syncText());
         setTimeout(showList, 450);
       })
       .catch(function () {
@@ -580,7 +588,7 @@
   function claimTask(waybill) {
     var who = "我";
     setSync("领取中…");
-    fetch(url("/api/claim"), {
+    apiFetch("/api/claim", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ waybill: waybill, who: who }),
@@ -600,7 +608,7 @@
           if (r.waybill === waybill) r.claimedBy = owner;
         });
         renderTickets();
-        setSync(nowText());
+        setSync(syncText());
       })
       .catch(function () {
         toast("领取失败，检查网络");
@@ -621,7 +629,7 @@
       e.stopPropagation();
       var rowEl = tick.closest(".row");
       if (rowEl && rowEl.classList.contains("blocked")) {
-        toast("没有入库号也没有单号，不能出货");
+        toast("入库号和单号必须都填写，才能出货");
         return;
       }
       if (rowEl) toggle(rowEl.getAttribute("data-k"));
@@ -642,7 +650,7 @@
     if (!row) return;
     // 没入库号也没单号的货不能出货：点了只提示，不改状态
     if (row.classList.contains("blocked")) {
-      toast("没有入库号也没有单号，不能出货");
+      toast("入库号和单号必须都填写，才能出货");
       return;
     }
     toggle(row.getAttribute("data-k"));
@@ -684,14 +692,15 @@
     fetchSheet()
       .then(function (data) {
         applyRows(data.rows || []);
+        setSync(syncText());
       })
-      .catch(function () {});
+      .catch(function (e) { setSync(e.message || "同步失败", true); });
   }, 8000);
 
   window.addEventListener("visibilitychange", function () {
     if (!document.hidden) load(false);
   });
 
+  if (transport) { applyRows(transport.cached()); setSync("本地清单 · 正在检查连接"); }
   load(true);
 })();
-

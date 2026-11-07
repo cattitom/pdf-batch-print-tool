@@ -1,7 +1,7 @@
 [package]
 name = "shipping-shell"
 version = "0.1.0"
-description = "出货助手（手机端壳，加载电脑上的出货清单页面）"
+description = "出货助手（本地清单、离线记录与电脑数据同步）"
 authors = ["you"]
 edition = "2021"
 

@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.hanlin.shippingshell",
   "build": {
-    "frontendDist": "../web"
+    "frontendDist": "../web",
+    "beforeBuildCommand": "node -e \"import(require('node:fs').existsSync('scripts/sync-mobile.mjs') ? './scripts/sync-mobile.mjs' : '../scripts/sync-mobile.mjs')\"",
+    "beforeDevCommand": "node -e \"import(require('node:fs').existsSync('scripts/sync-mobile.mjs') ? './scripts/sync-mobile.mjs' : '../scripts/sync-mobile.mjs')\""
   },
   "app": {
     "withGlobalTauri": true,

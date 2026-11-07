@@ -1,12 +1,11 @@
 import { usePackingArchive } from "./packing/usePackingArchive";
-import { withArchiveRows, HISTORY_ISSUE } from "./packing/archiveRows";
+import { HISTORY_ISSUE, ARCHIVED_WAYBILL_ISSUE } from "./packing/archiveRows";
 import { PackingSaveStatus } from "./packing/PackingSaveStatus";
 import { rowKey } from "./packing/recordKey";
 import { usePackingChecks } from "./packing/usePackingChecks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StatsModal, type CustomerStat } from "./packing/StatsModal";
 import { MobileSheetModal } from "./packing/MobileSheetModal";
-import { ShipImagesModal, type ShipImageResult } from "./packing/ShipImagesModal";
 import { LogModal } from "./packing/LogModal";
 import {
   useCloudSync,
@@ -40,7 +39,6 @@ import {
   FileTextOutlined,
   FilterFilled,
   FolderOpenOutlined,
-  ImportOutlined,
   InboxOutlined,
   LoginOutlined,
   MobileOutlined,
@@ -261,45 +259,6 @@ function toMarkdown(rows: PackingItemDto[]): string {
   return out.join("\n").trimEnd() + "\n";
 }
 
-/** 一票一段的「豆包粘贴稿」：按单号分块，粘给豆包就能生成可勾选的飞书待办清单。 */
-function toDoubao(rows: PackingItemDto[]): { text: string; tickets: number; pieces: number } {
-  const order: string[] = [];
-  const groups = new Map<string, PackingItemDto[]>();
-  for (const row of rows) {
-    const wb = row.waybill.trim();
-    // 没单号的行分不出票，粘给豆包也只会变成一锅粥
-    if (!wb) continue;
-    const list = groups.get(wb);
-    if (list) list.push(row);
-    else {
-      groups.set(wb, [row]);
-      order.push(wb);
-    }
-  }
-
-  const blocks: string[] = [];
-  let pieces = 0;
-  order.forEach((wb, i) => {
-    const list = groups.get(wb)!;
-    const total = list.reduce((n, r) => n + r.qty, 0);
-    pieces += total;
-    const cust = list.map((r) => r.customer.trim()).find(Boolean) || "—";
-    blocks.push(
-      [
-        `━━━ 第 ${i + 1} 张 · 单号 ${wb} · ${total} 件 · ${list.length} 行 ━━━`,
-        `帮我新建一篇飞书文档，标题：入库核对清单 | 单号 ${wb}（${total}件）`,
-        `客户：${cust} · ${list.length} 行 · ${total} 件`,
-        "正文用待办清单（可勾选的那种），一条一行：",
-        "",
-        ...list.map((r) => `${r.name} ｜ 数量 ${r.qty} ｜ 入库号 ${r.inbound.trim() || "—"}`),
-        "",
-      ].join("\n")
-    );
-  });
-
-  return { text: blocks.join("\n"), tickets: order.length, pieces };
-}
-
 /** 包一层「用户改过的行」：编辑后重新算 md，不回后端。 */
 export default function PackingPage({
   pendingDrop,
@@ -310,7 +269,7 @@ export default function PackingPage({
   active?: boolean;
 }) {
   const [rows, setRows] = useState<PackingItemDto[]>([]);
-  const { archiveError, archiveItems } = usePackingArchive(rows);
+  const { archiveError, archiveItems, mergeArchiveRows } = usePackingArchive(rows);
   const [sheet, setSheet] = useState<PackingSheetDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -360,14 +319,6 @@ export default function PackingPage({
   const [mobileOpen, setMobileOpen] = useState(false);
   /** 本次出货任务：截图里认出来的入库号 */
   const [taskCodes, setTaskCodes] = useState<string[]>([]);
-  /** 导入出货截图弹窗：开没开 / 待识别的图 / 识别中 / 上次识别结果 */
-  const [shipImagesOpen, setShipImagesOpen] = useState(false);
-  /** 拖放回调里要读「弹窗开没开」，用 ref 免得闭包拿到旧值 */
-  const shipOpenRef = useRef(false);
-  const [shipPaths, setShipPaths] = useState<string[]>([]);
-  const [shipBusy, setShipBusy] = useState(false);
-  const [shipResult, setShipResult] = useState<ShipImageResult | null>(null);
-  shipOpenRef.current = shipImagesOpen;
   /** 只看任务行 */
   const [taskOnly, setTaskOnly] = useState(false);
   /** 任务号（按单号分组），识别成功后生成，手机端领取用 */
@@ -391,7 +342,6 @@ export default function PackingPage({
   }, [pinned, rows]);
 
   const md = useMemo(() => toMarkdown(rows), [rows]);
-  const doubao = useMemo(() => toDoubao(rows), [rows]);
   const checkedCount = rows.filter((r) => r.checked).length;
   const totalQty = rows.reduce((n, r) => n + (Number.isFinite(r.qty) ? r.qty : 0), 0);
   const issueCount = rows.filter((r) => r.issues.length > 0).length;
@@ -754,6 +704,7 @@ export default function PackingPage({
         }
         return (
           <div>
+          {r.issues.includes(ARCHIVED_WAYBILL_ISSUE) && <span className="packing-history-label" title="原表单号已清空，按入库号和商品明细唯一匹配本地存档恢复">单号来自存档</span>}
           {r.issues.includes(HISTORY_ISSUE) && <span className="packing-history-label" title="原表中已无此记录，由本地数据库保留；出货状态为保存记录">历史存档</span>}
           {!v.trim() && <span className="packing-unnamed-label" title="原表商品名称为空，数量仍计入合计，请核对并补充名称">待补商品名 · 已计入数量</span>}
           <Input
@@ -942,11 +893,11 @@ export default function PackingPage({
   useEffect(() => {
     if (!archiveItems.length) return;
     setRows((current) => {
-      const merged = withArchiveRows(current, archiveItems);
+      const merged = mergeArchiveRows(current, checkedRef.current);
       rowsRef.current = merged;
       return merged;
     });
-  }, [archiveItems]);
+  }, [archiveItems, mergeArchiveRows]);
 
   const applySheet = (s: PackingSheetDto, external = false) => {
     externalFileRef.current = external;
@@ -965,7 +916,7 @@ export default function PackingPage({
         (local ? checkedRef.current[rowKey(it)] : undefined);
       return saved === undefined ? row : { ...row, checked: saved };
     });
-    const items = withArchiveRows(liveItems, archiveItems);
+    const items = mergeArchiveRows(liveItems, checkedRef.current);
     setSheet(s);
     rowsRef.current = items;
     setRows(items);
@@ -1226,14 +1177,6 @@ export default function PackingPage({
   useEffect(() => {
     const paths = pendingDrop?.paths ?? [];
     if (paths.length === 0) return;
-    // 导入出货截图的弹窗开着：拖进来的图归它，别当成整张表去解析
-    if (shipOpenRef.current) {
-      const imgs = paths.filter((p) => IMAGE_EXT.test(p));
-      if (imgs.length > 0) {
-        setShipPaths((prev) => [...prev, ...imgs.filter((p) => !prev.includes(p))]);
-        return;
-      }
-    }
     const path = paths[0];
     const isImage = IMAGE_EXT.test(path);
     let cancelled = false;
@@ -1346,29 +1289,6 @@ export default function PackingPage({
       if (!out) return;
       await api.saveTextFile(out, md);
       setSavedPath(out);
-      setError(null);
-    } catch (e) {
-      setError(errorText(e) + errorHint(e));
-    }
-  };
-
-  /** 导出「豆包粘贴稿」：按票一段，粘给豆包生成飞书待办清单 */
-  const exportDoubao = async () => {
-    if (doubao.tickets === 0) {
-      setError("当前表里没有带单号的票，导不出清单");
-      return;
-    }
-    try {
-      const day = new Date().toISOString().slice(0, 10);
-      const who = (cloudSheet || "").trim() || day;
-      const out = await saveFileDialog({
-        defaultPath: `豆包清单_${who}.txt`,
-        filters: [{ name: "文本", extensions: ["txt"] }],
-      });
-      if (!out) return;
-      await api.saveTextFile(out, doubao.text);
-      setSavedPath(out);
-      setScanHint(`已导出 ${doubao.tickets} 票 · ${doubao.pieces} 件，可以粘给豆包了`);
       setError(null);
     } catch (e) {
       setError(errorText(e) + errorHint(e));
@@ -1492,93 +1412,6 @@ export default function PackingPage({
       setTimeout(() => setCopyHint(null), 1800);
     } catch {
       setError("复制失败，直接手输上面的地址");
-    }
-  };
-
-  /** 打开「导入出货截图」弹窗（拖图 / 选图都在里面） */
-  const openShipImages = () => {
-    if (rows.length === 0) {
-      setError("先把表铺出来（同步 / 选择文件），再导入出货截图");
-      return;
-    }
-    // 每次打开都是新的一批：别把上次的图和结果留在窗口里
-    setShipPaths([]);
-    setShipResult(null);
-    setShipImagesOpen(true);
-  };
-
-  /** 弹窗里点「选文件」：多选图片，追加到待识别列表 */
-  const pickShipImages = async () => {
-    try {
-      const picked = await openFileDialog({
-        multiple: true,
-        directory: false,
-        filters: [{ name: "出货截图", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] }],
-      });
-      const list = Array.isArray(picked) ? picked : typeof picked === "string" && picked ? [picked] : [];
-      if (list.length === 0) return;
-      setShipPaths((prev) => [...prev, ...list.filter((p) => !prev.includes(p))]);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  };
-
-  /** 识别这批截图：认入库号 → 匹配当前表 → 打任务；对不上的当场报出来 */
-  const runShipImages = async () => {
-    const list = shipPaths;
-    if (list.length === 0) return;
-    setShipBusy(true);
-    try {
-      const r = await api.parseShipImages(list);
-      const rowsNow = rowsRef.current;
-      const known = new Set(rowsNow.map((x) => x.inbound.trim()));
-      const matched = r.codes.filter((c) => known.has(c));
-      const unknown = r.codes.filter((c) => !known.has(c));
-      // 按单号分组成任务：一个单号一个 task，编号 T1、T2…
-      // 没有单号的行不建任务 —— 手机上是按票领取的，挂到「未识别单号」那一堆里既没法领也容易领错
-      const byWb = new Map<string, { rows: number; boxes: number }>();
-      let noWaybill = 0;
-      for (const code of matched) {
-        const item = rowsNow.find((x) => x.inbound.trim() === code);
-        if (!item) continue;
-        const wb = item.waybill.trim();
-        if (!wb) {
-          noWaybill += 1;
-          continue;
-        }
-        const agg = byWb.get(wb) ?? { rows: 0, boxes: 0 };
-        agg.rows += 1;
-        agg.boxes += item.qty;
-        byWb.set(wb, agg);
-      }
-      const tasks: ShipTask[] = [...byWb.entries()].map(([wb, agg], i) => ({
-        id: `T${i + 1}`,
-        waybill: wb,
-        rows: agg.rows,
-        boxes: agg.boxes,
-      }));
-      setTaskCodes(matched);
-      setShipTasks(tasks);
-      setTaskOnly(true);
-      setShipResult({ total: r.codes.length, matched: matched.length, unknown, failed: r.failed });
-      api.setSetting(KEY_TASKS, JSON.stringify(matched)).catch(() => {});
-      api.setSetting(KEY_TASK_META, JSON.stringify(tasks)).catch(() => {});
-      setScanHint(
-        matched.length > 0
-          ? `本批 ${tasks.length} 个任务 / ${matched.length} 行${
-              noWaybill > 0 ? `（${noWaybill} 行没单号，不生成任务）` : ""
-            }，手机端点「任务」就能领`
-          : "这批图没匹配到任何行，检查一下图里的入库号",
-      );
-      // 认出来了就收窗：结果进表格 + 浮条提示；一行都没匹配上才留着窗口看「原表没有」
-      if (matched.length > 0) {
-        setShipImagesOpen(false);
-        setShipPaths([]);
-      }
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setShipBusy(false);
     }
   };
 
@@ -1732,24 +1565,8 @@ export default function PackingPage({
             <PieChartOutlined />
             统计
           </button>
-          <button
-            className="btn"
-            onClick={exportDoubao}
-            disabled={rows.length === 0}
-            title="按单号一票一段，导出能直接粘给豆包生成飞书待办清单的文本"
-          >
-            <CopyOutlined />
-            豆包清单
-          </button>
-          <button
-            className="btn"
-            onClick={openShipImages}
-            disabled={busy || rows.length === 0}
-            title="选几张「本次要出货」的截图，认出里面的入库号并匹配成任务（手机端只看这批）"
-          >
-            <ImportOutlined />
-            导入出货图
-          </button>
+
+
                 </div>
                 <div style={{ borderTop: "1px solid #eef0f3", paddingTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
             <Button onClick={clearAll} disabled={rows.length === 0}>
@@ -2073,7 +1890,7 @@ export default function PackingPage({
                 >
                   <span className="wchip-k">
                     <span className="mono">{p.waybill}</span>
-                    {rows.some((r) => r.waybill.trim() === p.key && r.issues.includes(HISTORY_ISSUE)) && <span className="packing-history-label">含存档</span>}
+                    {rows.some((r) => r.waybill.trim() === p.key && (r.issues.includes(HISTORY_ISSUE) || r.issues.includes(ARCHIVED_WAYBILL_ISSUE))) && <span className="packing-history-label">含存档</span>}
                     <i className="wchip-check" aria-hidden="true" />
                   </span>
                   <span className="wchip-v">{p.total} 件</span>
@@ -2185,18 +2002,6 @@ export default function PackingPage({
             />
           )}
         </Card>
-      )}
-
-      {shipImagesOpen && (
-        <ShipImagesModal
-          paths={shipPaths}
-          busy={shipBusy}
-          result={shipResult}
-          onPick={() => void pickShipImages()}
-          onRemove={(p) => setShipPaths((prev) => prev.filter((x) => x !== p))}
-          onRun={() => void runShipImages()}
-          onClose={() => setShipImagesOpen(false)}
-        />
       )}
 
       {mobileOpen && mobileInfo && (

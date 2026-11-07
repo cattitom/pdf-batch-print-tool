@@ -227,26 +227,59 @@
   .l-line.on .l-box { background: #2f9e6f; border-color: #2f9e6f; }
   .l-line .n { flex: 1; min-width: 0; }
   .l-line .m { display: block; font-size: 11.5px; color: #68717c; margin-top: 2px; }
-  #home { position: fixed; inset: 0; overflow-y: auto; padding: max(36px, env(safe-area-inset-top)) 22px 30px; }
+  /* 手机工作台：浅色界面和独立导航区，内容不与返回按钮重叠。 */
+  :root { --bg: #f5f7f8; --card: #fff; --text: #20312e; --dim: #788581; --accent: #287c67; --danger: #bd5049; --shell-nav: calc(48px + env(safe-area-inset-top, 0px)); }
+  #home { position: fixed; inset: 0; overflow-y: auto; padding: calc(24px + env(safe-area-inset-top)) 22px calc(28px + env(safe-area-inset-bottom)); background: radial-gradient(ellipse at 90% 0, #e0eee7 0, transparent 50%), var(--bg); }
   .home-wrap { max-width: 480px; margin: auto; }
-  #home h1 { font-size: 28px; margin: 12px 0 6px; }
-  #home p { color: var(--dim); margin: 0 0 28px; }
-  .module-card { text-align: left; display: block; padding: 22px; margin-bottom: 14px; color: var(--text); background: var(--card); border: 1px solid rgba(255,255,255,.08); }
-  .module-card strong { display: block; font-size: 18px; margin-bottom: 6px; }
-  .module-card small { display: block; color: var(--dim); font-size: 13px; font-weight: 400; }
-  .module-card:first-of-type { border-color: rgba(53,196,138,.4); }
-  #home-back { position: fixed; top: max(10px, env(safe-area-inset-top)); left: 12px; z-index: 90; width: auto; padding: 7px 12px; border-radius: 20px; background: #172027; color: #e6edf2; border: 1px solid #536571; font-size: 12px; }
-  body.module-open #settings, body.module-open #local { padding-top: max(56px, calc(env(safe-area-inset-top) + 44px)); }
+  .home-eyebrow { color: #658078; font-size: 11px; letter-spacing: 2px; font-weight: 600; }
+  #home h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -1px; margin: 13px 0 10px; }
+  #home p { color: var(--dim); margin: 0; font-size: 13px; line-height: 1.8; }
+  .home-heading { margin: 36px 0 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+  .home-heading span { font-size: 11px; color: var(--dim); font-weight: 400; }
+  .module-card { position: relative; text-align: left; display: flex; align-items: center; gap: 15px; width: 100%; padding: 19px 17px; margin-bottom: 12px; color: var(--text); background: #fff; border: 1px solid #e4eae7; border-radius: 18px; box-shadow: 0 3px 12px #243f3004; }
+  .module-icon { display: grid; place-items: center; flex: none; width: 44px; height: 44px; background: #eef3f1; color: #4a7064; border-radius: 14px; }
+  .module-icon svg { width: 23px; height: 23px; }
+  .module-copy { flex: 1; min-width: 0; }
+  .module-card strong { display: block; font-size: 16px; margin-bottom: 5px; font-weight: 600; }
+  .module-card small { display: block; color: #7b8782; font-size: 12px; font-weight: 400; line-height: 1.6; }
+  .module-arrow { color: #8d9c94; font-size: 24px; font-weight: 300; }
+  .module-card.featured { background: #226d59; color: #fff; padding: 25px 18px; border: 0; box-shadow: 0 8px 20px #226d591b; }
+  .module-card.featured small { color: #c5dfd4; }
+  .featured .module-icon { background: #ffffff19; color: #e0f1e8; }
+  .featured .module-arrow { color: #c5dfd4; }
+  .home-note { padding: 17px 5px; text-align: center; font-size: 11px; color: #87958f; }
+  #shell-nav { display: none; position: fixed; inset: 0 0 auto; height: var(--shell-nav); padding: env(safe-area-inset-top) 12px 0; align-items: center; justify-content: space-between; z-index: 90; background: #f9fbfa; border-bottom: 1px solid #e2e8e5; }
+  body.module-open #shell-nav { display: flex; }
+  #home-back { position: static; width: 82px; height: 44px; padding: 0; border: 0; border-radius: 0; color: #287c67; background: transparent; text-align: left; font-size: 14px; font-weight: 500; }
+  #shell-title { font-size: 14px; font-weight: 600; }
+  #shell-settings { width: 82px; height: 44px; padding: 0; text-align: right; background: transparent; color: #527267; font-size: 13px; font-weight: 500; }
+  body.module-open #view { top: var(--shell-nav); bottom: 0; height: calc(100% - var(--shell-nav)); }
+  body.module-open #gate, body.module-open #settings, body.module-open #local { top: var(--shell-nav); padding-top: 22px; }
+  #fab { display: none !important; }
+  .s-group { background: #fff; border: 1px solid #e4eae7; }
+  button.ghost { background: #e9efec; color: #375c50; }
+  .switch-row { background: #eaf0ed; }
+  .icon-bad { background: #faece9; }
 </style>
 </head>
 <body>
 <section id="home"><div class="home-wrap">
-<h1>工作台</h1><p>选择需要使用的模块</p>
-<button id="module-warehouse" class="module-card"><strong>入库 / 出货</strong><small>连接电脑，查看清单并处理出货</small></button>
-<button id="module-local" class="module-card"><strong>本地清单</strong><small>查看手机保存的清单，无需连接电脑</small></button>
-<button id="module-settings" class="module-card"><strong>连接设置</strong><small>管理配对电脑和连接历史</small></button>
+<div class="home-eyebrow">仓 库 随 行</div>
+<h1>今天的工作，从这里开始</h1>
+<p>连接仓库，处理每一票出货。<br>电脑不在身边，也能查看手机里的清单。</p>
+<div class="home-heading">我的工作<span>按需连接 · 随时查看</span></div>
+<button id="module-warehouse" class="module-card featured">
+<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3 8 9-5 9 5v11l-9 3-9-3V8Z"/><path d="m3 8 9 4 9-4M12 12v10M7 5.8l10 4.4"/></svg></span>
+<span class="module-copy"><strong>入库与出货</strong><small>查看实时清单，协同处理仓库业务</small></span><span class="module-arrow">›</span></button>
+<button id="module-local" class="module-card">
+<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h4"/></svg></span>
+<span class="module-copy"><strong>本地清单</strong><small>上次同步的记录，离线也可查看</small></span><span class="module-arrow">›</span></button>
+<button id="module-settings" class="module-card">
+<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5M8 9h8"/></svg></span>
+<span class="module-copy"><strong>设备与连接</strong><small>管理电脑配对与连接记录</small></span><span class="module-arrow">›</span></button>
+<div class="home-note">实时业务需与电脑处于同一 Wi-Fi</div>
 </div></section>
-<button id="home-back" class="hide">‹ 工作台</button>
+<nav id="shell-nav" aria-label="模块导航"><button id="home-back" class="hide">‹ 工作台</button><span id="shell-title">入库与出货</span><button id="shell-settings">设置</button></nav>
 <iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
 
 <button id="fab" class="hide" aria-label="设置">
@@ -404,31 +437,14 @@
 
   var openTimer = 0;
 
+  // 清单始终加载手机本地资源，电脑地址只用来请求 JSON。
   function leaveTo(url) {
     clearTimeout(openTimer);
-    var opened = false;
-    view.onload = function () {
-      opened = true;
-      clearTimeout(openTimer);
-      gate.classList.add('hide');
-      // 每次连上都顺手存一份：断网/电脑关机时手机里还有一份能勾
-      pullSnapshot(url);
-    };
-    view.src = url;
+    writeJSON('shipping-shell.current', { url: url });
+    view.onload = function () { if (moduleActive) gate.classList.add('hide'); };
+    view.src = './shipping/index.html';
     view.style.display = 'block';
-    fab.classList.remove('hide');
-    // 网页首屏慢时也别一直白屏：先露出 iframe，加载完再收门帘
-    // 加载成功前保留连接提示，避免空白页面。
-    // 右上角那个 ⇄ 按钮已经去掉（长按网页标题唤出），所以打不开时得自己把门帘收回来，
-    // 不然用户只能干瞪白屏，连换电脑的入口都没有
-    openTimer = setTimeout(function () {
-      if (opened || !view.src) return;
-      view.style.display = 'none';
-      view.removeAttribute('src');
-      showNotFound('网页一直没打开：确认手机和电脑在同一个 WiFi，或者换台电脑');
-      // 有本地快照就直接摊开，别让人干瞪眼
-      if (cache && cache.rows && cache.rows.length) openLocal();
-    }, 8000);
+    gate.classList.add('hide');
   }
 
   function searching() {
@@ -705,136 +721,8 @@
     return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
   }
 
-  /** 把远端 /api/sheet 存一份到本地：断网也能看、能勾 */
-  function pullSnapshot(url) {
-    if (!url) return Promise.resolve(false);
-    var u;
-    try { u = new URL(url); } catch (e) { return Promise.resolve(false); }
-    var token = u.searchParams.get('t') || '';
-    return fetch(u.origin + '/api/sheet?t=' + encodeURIComponent(token), { cache: 'no-store' })
-      .then(function (res) {
-        if (!res.ok) throw new Error('http ' + res.status);
-        return res.json();
-      })
-      .then(function (data) {
-        cache = { at: Date.now(), url: url, rows: data.rows || [] };
-        writeJSON(CACHE_KEY, cache);
-        return flushPending(u.origin, token);
-      })
-      .catch(function () { return false; });
-  }
-
-  /** 把离线勾过的推送回电脑；失败就留着下次再试 */
-  function flushPending(origin, token) {
-    if (!pending.length) return Promise.resolve(true);
-    var ops = pending.filter(function (op) { return !op.conflict; });
-    return Promise.all(ops.map(function (op) {
-      return fetch(origin + '/api/check?t=' + encodeURIComponent(token), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(op)
-      }).then(function (res) {
-        if (res.status === 409 || res.status === 400) {
-          op.conflict = true;
-          writeJSON(PENDING_KEY, pending);
-          alert('离线操作未保存：表格或记录已更新，请核对电脑上的最新状态后重新操作。');
-          return;
-        }
-        if (!res.ok) throw new Error('http ' + res.status);
-        pending = pending.filter(function (p) { return p !== op; });
-        writeJSON(PENDING_KEY, pending);
-      }).catch(function () {});
-    })).then(function () { return true; });
-  }
-
-  function openLocal() {
-    renderLocal();
-    localView.classList.remove('hide');
-  }
-
-  function toggleLocal(waybill, row) {
-    row.checked = !row.checked;
-    writeJSON(CACHE_KEY, cache);
-    pending = pending.filter(function (p) {
-      return !(p.waybill === waybill && p.inbound === row.inbound && p.name === row.name);
-    });
-    pending.push({ waybill: waybill, inbound: row.inbound, name: row.name, checked: !!row.checked, recordId: row.recordId, datasetId: row.datasetId, version: row.version, sourceId: row.sourceId });
-    writeJSON(PENDING_KEY, pending);
-    renderLocal();
-  }
-
-  function renderLocal() {
-    localView.innerHTML = '';
-
-    var head = mk('div', 'l-head');
-    head.appendChild(mk('h2', '', '离线清单'));
-    var x = mk('button', 'x', '关闭');
-    x.addEventListener('click', function () { localView.classList.add('hide'); if (!view.src && gate.classList.contains('hide')) showHome(); });
-    head.appendChild(x);
-    localView.appendChild(head);
-
-    if (!cache || !cache.rows || !cache.rows.length) {
-      localView.appendChild(mk('div', 'l-note', '还没有缓存：先连一次电脑，清单会自动存到手机上。'));
-      return;
-    }
-
-    var note = mk('div', 'l-note');
-    note.innerHTML = '数据截至 <b>' + hm(cache.at) + '</b> · 断网也能勾，连上电脑自动回传';
-    localView.appendChild(note);
-    var conflicts = pending.filter(function (op) { return op.conflict; }).length;
-    if (conflicts) {
-      var warning = mk('div', 'l-note', conflicts + ' 条离线操作存在冲突，尚未保存到电脑。请核对最新清单后重新勾选。');
-      var discard = mk('button', 'btn', '放弃冲突操作');
-      discard.addEventListener('click', function () {
-        pending = pending.filter(function (op) { return !op.conflict; });
-        writeJSON(PENDING_KEY, pending);
-        renderLocal();
-      });
-      warning.appendChild(discard);
-      localView.appendChild(warning);
-    }
-
-
-    var done = 0;
-    var total = 0;
-    var order = [];
-    var groups = {};
-    cache.rows.forEach(function (r) {
-      var qty = Number(r.qty) || 0;
-      total += qty;
-      if (r.checked) done += qty;
-      var wb = r.waybill || '未识别单号';
-      if (!groups[wb]) { groups[wb] = []; order.push(wb); }
-      groups[wb].push(r);
-    });
-
-    var stats = mk('div', 'l-stats');
-    stats.innerHTML = '已出 <b>' + done + '</b> 件　未出 <b>' + (total - done) + '</b> 件';
-    localView.appendChild(stats);
-
-    order.forEach(function (wb) {
-      var list = groups[wb];
-      var left = list.reduce(function (n, r) { return n + (Number(r.qty) || 0); }, 0);
-      var card = mk('div', 'l-ticket');
-      var top = mk('div', 't');
-      top.appendChild(mk('span', '', wb));
-      top.appendChild(mk('span', 'tag', left + ' 件'));
-      card.appendChild(top);
-      list.forEach(function (r) {
-        var line = mk('div', 'l-line' + (r.checked ? ' on' : ''));
-        var box = mk('span', 'l-box', r.checked ? '✓' : '');
-        line.appendChild(box);
-        var body = mk('span', 'n', r.name);
-        body.appendChild(mk('span', 'm', (Number(r.qty) || 0) + ' 件 · ' + (r.inbound || '无入库号')));
-        line.appendChild(body);
-        line.addEventListener('click', function () { toggleLocal(wb, r); });
-        card.appendChild(line);
-      });
-      localView.appendChild(card);
-    });
-  }
-
-  // ---------------- 设置页（右下角 ⚙ 打开） ----------------
+  // 本地清单与实时清单使用同一份 App 内置页面和数据层。
+  function openLocal() { enterModule('本地清单'); openShipping(); }
 
   function mk(tag, cls, text) {
     var n = document.createElement(tag);
@@ -870,14 +758,8 @@
     var relink = mk('button', 's-pill ghost', '重连');
     relink.addEventListener('click', function () {
       closeSettings();
-      if (current) {
-        view.onload = function () {
-          gate.classList.add('hide');
-          // 重连上就把离线期间勾的推回去
-          pullSnapshot(current.url);
-        };
-        view.src = current.url;
-      }
+      enterModule();
+      openShipping();
     });
     act.appendChild(swap);
     act.appendChild(relink);
@@ -959,7 +841,7 @@
       gOther.appendChild(clr);
     }
     settings.appendChild(gOther);
-    settings.appendChild(mk('div', 's-foot', '手机上只读，改单在电脑上'));
+    settings.appendChild(mk('div', 's-foot', '清单保存在手机，出货操作连接后同步'));
   }
 
   function openSettings() {
@@ -969,9 +851,11 @@
   }
 
   fab.addEventListener('click', openSettings);
+  document.getElementById('shell-settings').addEventListener('click', openSettings);
 
   // 网页报告自己切到了单据页就收起齿轮：单据页底部整条是「确认出货」，别挡住。
   window.addEventListener('message', function (e) {
+    if (e.source !== view.contentWindow) return;
     var d = e && e.data;
     if (!d || typeof d !== 'object' || d.source !== 'shipping-mobile') return;
     if (d.type !== 'view') return;
@@ -981,7 +865,7 @@
   document.addEventListener('visibilitychange', function () {
     // 从后台切回来、还没连上就再找一次；
     // 扫码时切出去（相机是原生界面）不要重复触发发现，等扫码回调就行
-    if (document.hidden || view.src || !moduleActive) return;
+    if (document.hidden || view.src || !moduleActive || gate.classList.contains('hide')) return;
     if (!el.scanning.classList.contains('hide')) return;
     boot();
   });
@@ -1010,16 +894,30 @@
     document.body.classList.remove('module-open');
     home.classList.remove('hide');
   }
-  function enterModule() {
+  function openShipping() {
+    cache = readJSON(CACHE_KEY, null);
+    var saved = current || loadAuto() || loadHistory().find(function (item) { return item.url; });
+    if (!saved && cache && cache.url) saved = { url: cache.url };
+    if (saved && saved.url) {
+      current = saved;
+      leaveTo(saved.url);
+    } else {
+      view.src = './shipping/index.html';
+      view.style.display = 'block';
+      gate.classList.add('hide');
+    }
+  }
+  function enterModule(title) {
+    document.getElementById('shell-title').textContent = title || '入库与出货';
     moduleActive = true;
     home.classList.add('hide');
     homeBack.classList.remove('hide');
     document.body.classList.add('module-open');
   }
   homeBack.addEventListener('click', showHome);
-  document.getElementById('module-warehouse').addEventListener('click', function () { enterModule(); boot(); });
-  document.getElementById('module-local').addEventListener('click', function () { enterModule(); openLocal(); });
-  document.getElementById('module-settings').addEventListener('click', function () { enterModule(); openSettings(); });
+  document.getElementById('module-warehouse').addEventListener('click', function () { enterModule(); openShipping(); });
+  document.getElementById('module-local').addEventListener('click', function () { enterModule('本地清单'); openShipping(); });
+  document.getElementById('module-settings').addEventListener('click', function () { enterModule('设备与连接'); openSettings(); });
   showHome();
 })();
 </script>

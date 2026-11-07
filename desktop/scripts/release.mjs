@@ -30,18 +30,25 @@ try {
     const releaseDir = path.join(desktopDir, 'src-tauri/target/release');
     if (!forwarded.includes('--no-bundle')) {
       const installerDir = path.join(releaseDir, 'installers', name);
-      await rm(installerDir, { recursive: true, force: true });
-      await mkdir(installerDir, { recursive: true });
+      const installers = [];
       for (const format of ['nsis', 'msi']) {
         const directory = path.join(releaseDir, 'bundle', format);
         for (const file of await readdir(directory).catch(() => [])) {
           const source = path.join(directory, file);
           if (/\.(exe|msi)$/i.test(file) && (await stat(source)).mtimeMs >= started - 2000) {
-            await copyFile(source, path.join(installerDir, file));
-            console.log(`安装包：${path.join(installerDir, file)}`);
+            installers.push({ source, file });
           }
         }
       }
+      if (!installers.length) throw new Error('构建完成但没有找到本次生成的安装包，请检查打包日志；旧安装包已保留');
+      await rm(installerDir, { recursive: true, force: true });
+      await mkdir(installerDir, { recursive: true });
+      for (const { source, file } of installers) {
+        const target = path.join(installerDir, file);
+        await copyFile(source, target);
+        console.log(`安装包：${target}`);
+      }
+
     }
 
   }

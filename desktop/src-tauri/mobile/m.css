@@ -717,3 +717,34 @@ h1 {
   opacity: 0.4;
 }
 
+
+/* 手机清单：与本地工作台统一，内嵌时由外壳导航承担顶部安全区。 */
+:root { --bg: #f5f7f8; --text: #20312e; --muted: #77847f; --ok: #287c67; --ok-bg: #edf6f0; --line: #e4eae7; --line-2: #dce4df; }
+.in-shell .head, .in-shell .doc-bar { padding-top: 16px; }
+.head { background: #f5f7f8; border-bottom: 0; padding-left: 20px; padding-right: 20px; padding-bottom: 14px; }
+h1 { font-size: 24px; font-weight: 650; letter-spacing: -.6px; }
+#sub { margin-top: 5px; font-size: 11px; color: #86918c; }
+.icon-btn { width: 38px; height: 38px; border-radius: 12px; border-color: #e4eae7; color: #557367; }
+.stats { margin-top: 18px; gap: 18px; }
+.stat { gap: 5px; font-size: 11px; }
+.stat b { font-size: 24px; font-weight: 650; letter-spacing: -.7px; }
+#doneQty { color: #287c67; }
+.sync { font-size: 10px; color: #8b9690; }
+.search { height: 42px; margin-top: 17px; border: 1px solid #e4eae7; border-radius: 13px; padding: 0 13px; }
+.search input { font-size: 13px; }
+.seg { margin-top: 13px; background: #e9eeeb; border-radius: 12px; padding: 4px; }
+.seg button { font-size: 12px; min-height: 32px; border-radius: 9px; color: #798780; }
+.seg button.on { color: #286d58; background: #fff; box-shadow: 0 2px 5px #29493609; }
+.list { padding: 2px 16px calc(24px + env(safe-area-inset-bottom)); gap: 12px; }
+.ticket { padding: 18px 17px 16px; border: 1px solid #e2e9e4; border-radius: 18px; gap: 12px; box-shadow: 0 3px 10px #203c2e03; }
+.t-no { font-family: inherit; font-size: 17px; font-weight: 650; letter-spacing: .1px; }
+.tag { border-radius: 6px; padding: 2px 7px; font-size: 10px; line-height: 17px; }
+.t-meta { color: #87938d; font-size: 12px; }
+.t-meta.warn { color: #a77b38; }
+.t-bar { height: 4px; background: #eef2ef; margin-top: 3px; }
+.t-bar i { background: #91b3a3; }
+.ticket.done .t-bar i { background: #438f6c; }
+.t-foot { font-size: 11px; color: #839088; }
+.btn-primary, .btn-claim, .row.done .tick { background: #287c67; border-color: #287c67; }
+.row.blocked .name { color: var(--text); }
+.tag.archive { background: #edf2f8; color: #59738d; font-weight: 400; vertical-align: 2px; }
