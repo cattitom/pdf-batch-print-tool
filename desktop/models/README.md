@@ -1,6 +1,6 @@
 # OCR 模型（PaddleOCR / MNN）
 
-「出货清单」页签拖截图时，会优先用这里的模型；**没有模型就自动回退到 Windows 自带 OCR**。
+「出货清单」页签拖截图时，只使用这里的 PaddleOCR 模型；**模型缺失或初始化失败会明确报错**。
 
 ## 需要的文件
 
@@ -54,3 +54,10 @@ foreach ($f in 'PP-OCRv6_medium_det.mnn','PP-OCRv6_small_rec.mnn','ppocr_keys_v6
 - `tauri.conf.json` 的 `bundle.resources` 已经把第一组打进安装包（约 40MB）
 
 模型不进版本库（`*.mnn` 在 `.gitignore` 里），release 时靠打包配置带出去。
+
+
+## 下载和打包检查
+
+在 desktop 目录运行 `pnpm models:download`，按 `scripts/ocr-models.json` 校验大小和 SHA-256。
+`pnpm release` 打包前要求模型齐全且校验通过，只提供包含模型的完整版。
+默认 Tauri 配置始终包含三个模型资源。

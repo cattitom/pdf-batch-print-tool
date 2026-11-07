@@ -128,7 +128,13 @@ impl Db {
         if let Some(parent) = path.as_ref().parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let conn = Connection::open(path)?;
+        let path = path.as_ref();
+        log::info!("数据库初始化：path={}", path.display());
+        let conn = Connection::open(path).map_err(|e| {
+            log::error!("数据库初始化失败：step=open path={} error={e:?}", path.display());
+            e
+        })?;
+        log::info!("数据库连接：readonly={:?}", conn.is_readonly("main"));
         Self::init(conn)
     }
 
@@ -138,10 +144,22 @@ impl Db {
     }
 
     fn init(conn: Connection) -> rusqlite::Result<Db> {
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| {
+            log::error!("数据库初始化失败：step=journal_mode_WAL error={e:?}");
+            match e {
+                rusqlite::Error::SqliteFailure(code, message) => rusqlite::Error::SqliteFailure(code, Some(format!("step=journal_mode_WAL extended_code={} {}", code.extended_code, message.unwrap_or_default()))),
+                other => other,
+            }
+        })?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let db = Db { conn };
-        db.migrate()?;
+        db.migrate().map_err(|e| {
+            log::error!("数据库初始化失败：step=migrate error={e:?}");
+            match e {
+                rusqlite::Error::SqliteFailure(code, message) => rusqlite::Error::SqliteFailure(code, Some(format!("step=migrate extended_code={} {}", code.extended_code, message.unwrap_or_default()))),
+                other => other,
+            }
+        })?;
         Ok(db)
     }
 
@@ -169,15 +187,23 @@ impl Db {
         name: &str,
         checked: bool,
     ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "INSERT INTO packing_checks(waybill, inbound, name, checked, updated_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now', 'localtime'))
-             ON CONFLICT(waybill, inbound, name) DO UPDATE SET
-               checked = excluded.checked,
-               updated_at = excluded.updated_at",
-            params![waybill, inbound, name, checked as i64],
-        )?;
-        Ok(())
+        self.set_packing_checks(&[(waybill.to_owned(), inbound.to_owned(), name.to_owned(), checked)])
+    }
+
+    /// 同一批勾选全部提交，任意一行失败则全部回滚。
+    pub fn set_packing_checks(&self, changes: &[(String, String, String, bool)]) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO packing_checks(waybill, inbound, name, checked, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, datetime('now', 'localtime'))
+                 ON CONFLICT(waybill, inbound, name) DO UPDATE SET
+                   checked = excluded.checked, updated_at = excluded.updated_at")?;
+            for (waybill, inbound, name, checked) in changes {
+                stmt.execute(params![waybill, inbound, name, *checked as i64])?;
+            }
+        }
+        tx.commit()
     }
 
     /// 全部勾选记录（waybill, inbound, name, checked）。行数不多，一次读完。
@@ -433,4 +459,45 @@ mod tests {
         }
         let _ = std::fs::remove_file(&path);
     }
+    #[test]
+    fn packing_batch_rolls_back_when_one_row_fails() {
+        let db = Db::open_in_memory().unwrap();
+        db.set_packing_check("W", "I", "existing", false).unwrap();
+        db.conn.execute_batch("CREATE TRIGGER reject_bad BEFORE INSERT ON packing_checks
+            WHEN NEW.name = 'bad' BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(db.set_packing_checks(&[
+            ("W".into(), "I".into(), "existing".into(), true),
+            ("W".into(), "I".into(), "bad".into(), true),
+        ]).is_err());
+        let rows = db.all_packing_checks().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].3);
+        db.set_packing_checks(&[
+            ("W".into(), "I".into(), "existing".into(), true),
+            ("W".into(), "I".into(), "good".into(), true),
+        ]).unwrap();
+        assert!(db.all_packing_checks().unwrap().iter().all(|r| r.3));
+    }
+
+    #[test]
+    fn packing_batch_survives_database_reopen() {
+        let path = std::env::temp_dir().join(format!("packing-batch-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        {
+            let db = Db::open(&path).unwrap();
+            db.set_packing_checks(&[
+                ("W1".into(), "I1".into(), "商品一".into(), true),
+                ("W2".into(), "I2".into(), "商品二".into(), false),
+            ]).unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            let rows = db.all_packing_checks().unwrap();
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().any(|r| r.0 == "W1" && r.3));
+            assert!(rows.iter().any(|r| r.0 == "W2" && !r.3));
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
 }

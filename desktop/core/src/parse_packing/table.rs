@@ -192,6 +192,12 @@ impl Strategy {
             mark_text: false,
             red: self.span_red(red),
         };
+        // 无名货物的到货备注可能落在未识别列中，仍保留明确的星期到货说明。
+        if out.name.is_empty() && !out.qty_raw.is_empty() && out.arrival.is_empty() {
+            if let Some(note) = row.iter().find(|cell| cell.contains("星期") && cell.contains('到')) {
+                out.arrival = note.trim().to_string();
+            }
+        }
         if let Some(i) = self.mark {
             if let Some(cell) = row.get(i) {
                 let cell = cell.trim();
@@ -366,11 +372,12 @@ pub(crate) fn parse_table_styled(
         if raw.name.is_empty() && raw.qty_raw.is_empty() && raw.inbound.is_empty() {
             continue;
         }
-        // 只有数量、没有名称/入库号/目的地 → 是表尾合计，别当成一条货
+        // 整行只有数量才视为表尾合计；有尺寸或备注的无名货物仍须保留并提示补名称。
         if !raw.qty_raw.trim().is_empty()
             && raw.name.trim().is_empty()
             && raw.inbound.trim().is_empty()
             && raw.destination.trim().is_empty()
+            && row.iter().filter(|cell| !cell.trim().is_empty()).count() == 1
         {
             let v = parse_qty(&raw.qty_raw);
             if v > 0 {

@@ -23,11 +23,12 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 pdfimpose-core = { path = "../core" }
 base64 = "0.22"
+getrandom = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12"
 log = { version = "0.4", features = ["std"] }
-# PaddleOCR（MNN 推理）：models/ 下有 .mnn 模型时优先用它，比系统 OCR 准
+# PaddleOCR（MNN 推理）：唯一 OCR 引擎，运行识别需要完整模型
 ocr-rs = "2.4"
 # 手机出货：局域网小服务 + 二维码
 tiny_http = "0.12"
@@ -49,16 +50,8 @@ regex = "1"
 # 查找 WPS 安装路径（读取注册表）
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
-# 装箱单图片识别：直接用系统自带 OCR（Windows.Media.Ocr），离线、免费
+# 微信本机进程读取所需的 Windows API；OCR 仅使用 PaddleOCR。
 windows = { version = "0.62", features = [
-    "Foundation",
-    "Foundation_Collections",
-    "Globalization",
-    "Graphics_Imaging",
-    "Media_Ocr",
-    "Storage",
-    "Storage_Streams",
-    "Win32_System_Com",
     # 微信解密：读 Weixin.exe 进程内存
     "Win32_System_Threading",
     "Win32_System_Memory",
@@ -66,7 +59,6 @@ windows = { version = "0.62", features = [
 ] }
 # 识别前放大图片（小字号直接 OCR 掉字严重）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-windows-future = "0.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

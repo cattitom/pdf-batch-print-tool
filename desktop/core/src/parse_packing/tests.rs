@@ -246,3 +246,21 @@ use super::*;
         assert!(!sheet.items[0].checked);
         assert_eq!(sheet.items[0].inbound, "A1001");
     }
+
+#[test]
+fn unnamed_goods_with_dimensions_are_not_totals() {
+    let text = [
+        "商品名称\t长\t宽\t高\t体积\t重量\t箱数\t备注\t报关\t目的地\t入库号",
+        "已有货物\t30\t20\t20\t2\t17.5\t627\t\t\t\t",
+        "\t51\t41\t39\t13.59\t\t150\t星期一到\t\t\t",
+        "\t\t\t\t\t\t777\t\t\t\t",
+    ].join("\n");
+    let sheet = parse_text(&text);
+    assert_eq!(sheet.items.len(), 2);
+    assert_eq!(sheet.items[1].qty, 150);
+    assert_eq!(sheet.items[1].arrival, "星期一到");
+    assert!(sheet.items[1].has_issue("name"));
+    assert_eq!(sheet.total_qty, 777);
+    assert_eq!(sheet.expected_qty, Some(777));
+    assert!(!sheet.warnings.iter().any(|w| w.contains("合计对不上")));
+}

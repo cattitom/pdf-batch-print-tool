@@ -166,6 +166,10 @@ export function errorHint(e: unknown): string {
 
 /** 手机端一行：只带勾选要用的字段。 */
 export interface MobileRowDto {
+  sourceId?: string;
+  recordId?: string;
+  datasetId?: string;
+  version?: number;
   waybill: string;
   inbound: string;
   name: string;
@@ -251,8 +255,9 @@ export const api = {
     invoke<PackingSheetDto>("parse_packing_xls", { path, sheet: sheet ?? null }),
   // WPS 云表格同步：借已登录的 Chrome 拉 .xls → Rust 直接解析（不依赖 Python）。
   // sheet 传 null = 自动挑最新一张来货登记表；传表名 = 只重解析那张（用刚下的文件）
-  syncKdocsPacking: (sheet?: string | null) =>
-    invoke<KdocsSyncDto>("sync_kdocs_packing", { sheet: sheet ?? null }),
+  syncKdocsPacking: (sheet?: string | null, checkRemote = false) =>
+    invoke<KdocsSyncDto>("sync_kdocs_packing", { sheet: sheet ?? null, checkRemote }),
+  snapshotKdocsCache: (path: string) => invoke<string>("snapshot_kdocs_cache", { path }),
   /** 打开 WPS 云表格登录窗口（脚本随程序发，返回落盘路径） */
   kdocsLoginOpen: () => invoke<string>("open_kdocs_login"),
   saveTextFile: (path: string, content: string) =>
@@ -261,8 +266,8 @@ export const api = {
   // 手机出货：桌面端起局域网服务，手机浏览器勾选
   mobileStart: (rows: MobileRowDto[]) => invoke<MobileInfoDto>("mobile_start", { rows }),
   mobileSync: (rows: MobileRowDto[]) => invoke<void>("mobile_sync", { rows }),
-  mobileSetCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>
-    invoke<void>("mobile_set_check", { waybill, inbound, name, checked }),
+  mobileSetCheck: (waybill: string, inbound: string, name: string, checked: boolean, expected?: MobileRowDto[]) =>
+    invoke<void>("mobile_set_check", { waybill, inbound, name, checked, expected: expected ?? null }),
   mobileRows: () => invoke<MobileRowDto[]>("mobile_rows"),
   mobileResetToken: () => invoke<MobileInfoDto>("mobile_reset_token"),
   mobileStop: () => invoke<void>("mobile_stop"),
@@ -312,6 +317,8 @@ export const api = {
   // 出货清单：已录勾选（按 单号 + 入库号 + 商品名 认行）
   setPackingCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>
     invoke<void>("set_packing_check", { waybill, inbound, name, checked }),
+  setPackingChecks: (changes: PackingCheckDto[], expected?: MobileRowDto[]) =>
+    invoke<void>("set_packing_checks", { changes, expected: expected ?? null }),
   listPackingChecks: () => invoke<PackingCheckDto[]>("list_packing_checks"),
   clearPackingChecks: () => invoke<void>("clear_packing_checks"),
 };

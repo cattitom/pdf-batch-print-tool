@@ -227,9 +227,26 @@
   .l-line.on .l-box { background: #2f9e6f; border-color: #2f9e6f; }
   .l-line .n { flex: 1; min-width: 0; }
   .l-line .m { display: block; font-size: 11.5px; color: #68717c; margin-top: 2px; }
+  #home { position: fixed; inset: 0; overflow-y: auto; padding: max(36px, env(safe-area-inset-top)) 22px 30px; }
+  .home-wrap { max-width: 480px; margin: auto; }
+  #home h1 { font-size: 28px; margin: 12px 0 6px; }
+  #home p { color: var(--dim); margin: 0 0 28px; }
+  .module-card { text-align: left; display: block; padding: 22px; margin-bottom: 14px; color: var(--text); background: var(--card); border: 1px solid rgba(255,255,255,.08); }
+  .module-card strong { display: block; font-size: 18px; margin-bottom: 6px; }
+  .module-card small { display: block; color: var(--dim); font-size: 13px; font-weight: 400; }
+  .module-card:first-of-type { border-color: rgba(53,196,138,.4); }
+  #home-back { position: fixed; top: max(10px, env(safe-area-inset-top)); left: 12px; z-index: 90; width: auto; padding: 7px 12px; border-radius: 20px; background: #172027; color: #e6edf2; border: 1px solid #536571; font-size: 12px; }
+  body.module-open #settings, body.module-open #local { padding-top: max(56px, calc(env(safe-area-inset-top) + 44px)); }
 </style>
 </head>
 <body>
+<section id="home"><div class="home-wrap">
+<h1>工作台</h1><p>选择需要使用的模块</p>
+<button id="module-warehouse" class="module-card"><strong>入库 / 出货</strong><small>连接电脑，查看清单并处理出货</small></button>
+<button id="module-local" class="module-card"><strong>本地清单</strong><small>查看手机保存的清单，无需连接电脑</small></button>
+<button id="module-settings" class="module-card"><strong>连接设置</strong><small>管理配对电脑和连接历史</small></button>
+</div></section>
+<button id="home-back" class="hide">‹ 工作台</button>
 <iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
 
 <button id="fab" class="hide" aria-label="设置">
@@ -242,7 +259,7 @@
 <section id="settings" class="hide"></section>
 <section id="local" class="hide"></section>
 
-<div id="gate">
+<div id="gate" class="hide">
   <div class="panel">
     <!-- 查找中 -->
     <div id="status">
@@ -325,6 +342,10 @@
   var LEGACY_HOST = 'shipping-shell.host';
   var MAX_HISTORY = 5;
 
+  var moduleActive = false;
+  var navigationId = 0;
+  var home = document.getElementById("home");
+  var homeBack = document.getElementById("home-back");
   var lastPeer = null;   // 当前「发现」到的电脑
 
   function readJSON(key, fallback) {
@@ -397,7 +418,7 @@
     view.style.display = 'block';
     fab.classList.remove('hide');
     // 网页首屏慢时也别一直白屏：先露出 iframe，加载完再收门帘
-    setTimeout(function () { if (view.src) gate.classList.add('hide'); }, 1800);
+    // 加载成功前保留连接提示，避免空白页面。
     // 右上角那个 ⇄ 按钮已经去掉（长按网页标题唤出），所以打不开时得自己把门帘收回来，
     // 不然用户只能干瞪白屏，连换电脑的入口都没有
     openTimer = setTimeout(function () {
@@ -421,7 +442,7 @@
   function showFound(peer) {
     lastPeer = peer;
     setState('found');
-    el.foundSub.textContent = (peer.name || '电脑') + ' · ' + peer.host;
+    el.foundSub.textContent = (peer.name || '电脑') + ' · ' + peer.host + ' · 首次连接需扫码配对';
     var auto = loadAuto();
     el.remember.checked = !!(auto && auto.host === peer.host);
   }
@@ -472,6 +493,7 @@
   }
 
   function showNotFound(msg) {
+    if (!moduleActive) return;
     lastPeer = null;
     setState('notfound');
     var detail = msg ? String(msg) : '';
@@ -492,19 +514,32 @@
 
   function connectPeer(peer, remember) {
     if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
-    current = { host: peer.host, name: peer.name || '', url: peer.url };
-    if (remember) {
-      saveAuto({ host: peer.host, name: peer.name || '', url: peer.url });
+    var origin;
+    try { origin = new URL(peer.url).origin; } catch (e) { showNotFound('电脑地址无效'); return; }
+    var saved = [loadAuto()].concat(loadHistory()).find(function (item) {
+      try {
+        var u = new URL(item && item.url);
+        return u.origin === origin && /^[a-f0-9]{64}$/i.test(u.searchParams.get('t') || '');
+      } catch (e) { return false; }
+    });
+    if (!saved) {
+      showNotFound('已发现 ' + (peer.name || peer.host) + '。首次连接请扫描电脑「手机出货」中的二维码配对。');
+      return;
     }
-    pushHistory({ host: peer.host, name: peer.name || '', url: peer.url });
-    leaveTo(peer.url);
+    var paired = { host: peer.host, name: peer.name || saved.name || '', url: saved.url };
+    if (remember) saveAuto(paired);
+    connectUrl(paired.url, paired);
   }
 
   function connectUrl(raw, meta) {
+    if (!moduleActive) return;
     var url = String(raw || '').trim();
     if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
     var u;
     try { u = new URL(url); } catch (e) { showNotFound('地址看不懂：' + url); return; }
+    if (!/^[a-f0-9]{64}$/i.test(u.searchParams.get('t') || '')) {
+      showNotFound('请扫描电脑「手机出货」中的二维码配对，旧链接需要重新扫码。'); return;
+    }
     var host = u.hostname;
     if (!host) { showNotFound('地址里没有电脑 IP'); return; }
     current = { host: host, name: (meta && meta.name) || '', url: u.href };
@@ -522,13 +557,16 @@
 
   function boot() {
     if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    var requestId = ++navigationId;
     searching();
     var auto = loadAuto();
     discover().then(function (peer) {
+      if (!moduleActive || requestId !== navigationId) return;
       if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
       if (auto && auto.host === peer.host) { connectPeer(peer, false); return; }
       showFound(peer);
     }).catch(function (e) {
+      if (!moduleActive || requestId !== navigationId) return;
       showNotFound(String(e && e.message ? e.message : e));
     });
   }
@@ -689,13 +727,19 @@
   /** 把离线勾过的推送回电脑；失败就留着下次再试 */
   function flushPending(origin, token) {
     if (!pending.length) return Promise.resolve(true);
-    var ops = pending.slice();
+    var ops = pending.filter(function (op) { return !op.conflict; });
     return Promise.all(ops.map(function (op) {
       return fetch(origin + '/api/check?t=' + encodeURIComponent(token), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(op)
       }).then(function (res) {
+        if (res.status === 409 || res.status === 400) {
+          op.conflict = true;
+          writeJSON(PENDING_KEY, pending);
+          alert('离线操作未保存：表格或记录已更新，请核对电脑上的最新状态后重新操作。');
+          return;
+        }
         if (!res.ok) throw new Error('http ' + res.status);
         pending = pending.filter(function (p) { return p !== op; });
         writeJSON(PENDING_KEY, pending);
@@ -714,7 +758,7 @@
     pending = pending.filter(function (p) {
       return !(p.waybill === waybill && p.inbound === row.inbound && p.name === row.name);
     });
-    pending.push({ waybill: waybill, inbound: row.inbound, name: row.name, checked: !!row.checked });
+    pending.push({ waybill: waybill, inbound: row.inbound, name: row.name, checked: !!row.checked, recordId: row.recordId, datasetId: row.datasetId, version: row.version, sourceId: row.sourceId });
     writeJSON(PENDING_KEY, pending);
     renderLocal();
   }
@@ -725,7 +769,7 @@
     var head = mk('div', 'l-head');
     head.appendChild(mk('h2', '', '离线清单'));
     var x = mk('button', 'x', '关闭');
-    x.addEventListener('click', function () { localView.classList.add('hide'); });
+    x.addEventListener('click', function () { localView.classList.add('hide'); if (!view.src && gate.classList.contains('hide')) showHome(); });
     head.appendChild(x);
     localView.appendChild(head);
 
@@ -737,6 +781,19 @@
     var note = mk('div', 'l-note');
     note.innerHTML = '数据截至 <b>' + hm(cache.at) + '</b> · 断网也能勾，连上电脑自动回传';
     localView.appendChild(note);
+    var conflicts = pending.filter(function (op) { return op.conflict; }).length;
+    if (conflicts) {
+      var warning = mk('div', 'l-note', conflicts + ' 条离线操作存在冲突，尚未保存到电脑。请核对最新清单后重新勾选。');
+      var discard = mk('button', 'btn', '放弃冲突操作');
+      discard.addEventListener('click', function () {
+        pending = pending.filter(function (op) { return !op.conflict; });
+        writeJSON(PENDING_KEY, pending);
+        renderLocal();
+      });
+      warning.appendChild(discard);
+      localView.appendChild(warning);
+    }
+
 
     var done = 0;
     var total = 0;
@@ -788,6 +845,7 @@
 
   function closeSettings() {
     settings.classList.add('hide');
+    if (!view.src && gate.classList.contains('hide')) showHome();
   }
 
   function renderSettings() {
@@ -905,7 +963,7 @@
   }
 
   function openSettings() {
-    if (!current) { showNotFound('还没连上电脑，先连一台'); return; }
+
     renderSettings();
     settings.classList.remove('hide');
   }
@@ -923,7 +981,7 @@
   document.addEventListener('visibilitychange', function () {
     // 从后台切回来、还没连上就再找一次；
     // 扫码时切出去（相机是原生界面）不要重复触发发现，等扫码回调就行
-    if (document.hidden || view.src) return;
+    if (document.hidden || view.src || !moduleActive) return;
     if (!el.scanning.classList.contains('hide')) return;
     boot();
   });
@@ -937,7 +995,32 @@
     if (legacy) localStorage.removeItem(LEGACY_HOST);
   } catch (e) {}
 
-  boot();
+  function showHome() {
+    moduleActive = false;
+    navigationId++;
+    clearTimeout(openTimer);
+    view.onload = null;
+    view.style.display = 'none';
+    view.removeAttribute('src');
+    gate.classList.add('hide');
+    settings.classList.add('hide');
+    localView.classList.add('hide');
+    fab.classList.add('hide');
+    homeBack.classList.add('hide');
+    document.body.classList.remove('module-open');
+    home.classList.remove('hide');
+  }
+  function enterModule() {
+    moduleActive = true;
+    home.classList.add('hide');
+    homeBack.classList.remove('hide');
+    document.body.classList.add('module-open');
+  }
+  homeBack.addEventListener('click', showHome);
+  document.getElementById('module-warehouse').addEventListener('click', function () { enterModule(); boot(); });
+  document.getElementById('module-local').addEventListener('click', function () { enterModule(); openLocal(); });
+  document.getElementById('module-settings').addEventListener('click', function () { enterModule(); openSettings(); });
+  showHome();
 })();
 </script>
 </body>

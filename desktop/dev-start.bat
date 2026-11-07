@@ -2,6 +2,8 @@
 chcp 936 >nul
 title 批量 PDF 打印工具 - 开发模式
 cd /d "%~dp0"
+node scripts/check-runtime.mjs
+if errorlevel 1 goto :fail
 
 echo ==================================================
 echo   批量 PDF 打印工具 - 开发模式
@@ -59,7 +61,7 @@ pause
 exit /b %CODE%
 
 :no_pnpm
-echo [错误] 找不到 pnpm。请先安装 Node 22+ 和 pnpm。
+echo [错误] 找不到 pnpm。请先安装 Node 22.12.0+ 和 pnpm。
 goto :fail
 
 :no_cargo

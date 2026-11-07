@@ -122,7 +122,7 @@ extern "C" fn on_resolved(
 
 /// TXT 记录是一串 [长度][key=value]，挑出 token 和电脑名
 fn parse_txt(txt: *const u8, len: u16) -> (String, String) {
-    let mut token = String::new();
+    let token = String::new();
     let mut name = String::new();
     if txt.is_null() || len == 0 {
         return (token, name);
@@ -137,9 +137,7 @@ fn parse_txt(txt: *const u8, len: u16) -> (String, String) {
         }
         let text = String::from_utf8_lossy(&bytes[i..i + size]).to_string();
         i += size;
-        if let Some(v) = text.strip_prefix("token=") {
-            token = v.to_string();
-        } else if let Some(v) = text.strip_prefix("name=") {
+        if let Some(v) = text.strip_prefix("name=") {
             name = v.to_string();
         }
     }
@@ -262,9 +260,7 @@ pub fn discover(timeout: Duration) -> Result<(String, u16, String, String), Stri
     }
     let (host, port, token, name) =
         resolved.ok_or_else(|| "Bonjour 找到了服务，解析地址超时".to_string())?;
-    if token.is_empty() {
-        return Err("Bonjour 的 TXT 里没有 token".to_string());
-    }
+    // 发现服务不再携带凭证，授权链接由扫码保存在手机。
 
     // 3) 主机名 -> IPv4（.local 由系统 mDNS 解析）
     let addr = format!("{host}:{port}")

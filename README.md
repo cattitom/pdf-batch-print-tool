@@ -19,7 +19,7 @@
 前置条件（缺一个都会在界面报中文错）：
 
 1. **登录态**：先点「出货清单」页头的 **「WPS 登录」**（脚本随程序发，装完在 `<程序目录>\data\kdocs\tools\kdocs-login.bat`；仓库根目录也有同一份），用专门的浏览器配置打开云表格并扫码登录。窗口开着、关掉都行——关掉之后同步会自己起无界面 Chrome。这个配置记着登录状态，下次只需确认一次
-2. **Node.js 18+**（脚本用 `fetch` / `WebSocket`，本机 v24 可用）
+2. **Node.js 22.12.0+**（脚本启动时检查版本及 `fetch` / `WebSocket`，本机验证版本 24.12.0）
 
 链路：`kdocs-login.bat` 起的 Chrome（9222 调试端口）→ `tools/kdocs/kdocs-pull.mjs` 在页面里拿 presigned 下载地址取 `.xls` → Rust 直接解 BIFF8（`desktop/core/src/xls.rs`，零依赖）→ 现有解析器变待办。**不再需要 Python**。取数脚本和登录脚本都 `include_str!` 编进 Rust 二进制，运行期写到缓存目录下的 `tools\`，打包不用额外配资源。
 
@@ -40,6 +40,8 @@
 
 「出货清单」页右上角点「手机出货」，弹窗里出二维码；手机和电脑连同一个 Wi-Fi，扫码就能勾选。
 
+- 首次连接需扫描电脑面板中的二维码配对；自动发现只公布电脑名称和地址，不提供访问凭证。旧版本升级后需重新扫码
+- 手机勾选写入本机数据库成功后才返回成功，桌面轮询只读取结果；记录冲突会要求刷新核对
 - 服务只在桌面端运行时存在，表格不落手机；勾选实时回同步，并按原来的方式写进本机记录
 - 首次启动 Windows 会弹防火墙授权，要勾「专用网络」并允许；没弹或点掉了，用管理员 PowerShell 跑一次
   `netsh advfirewall firewall add rule name="PdfMobileReceipt" dir=in action=allow protocol=TCP localport=17650-17652`，
@@ -48,6 +50,8 @@
 - 没「入库号」也没「单号」的行不能出货：桌面端按钮灰着点不动，手机端同样点不动（只弹提示）；这些行照常算进未出、照常出现在手机页和导出里
 
 ## OCR 模型（不进仓库）
+
+推荐在 `desktop/` 运行 `pnpm models:download` 下载并校验模型；`pnpm release` 生成包含模型的完整版。
 
 「出货清单」拖截图时优先用 PaddleOCR 识别，模型是二进制（约 40MB），没进版本库。
 需要的话把这三个文件下载到 `desktop/models/`：
@@ -68,7 +72,7 @@ foreach ($f in 'PP-OCRv6_medium_det.mnn','PP-OCRv6_small_rec.mnn','ppocr_keys_v6
 }
 ```
 
-- **不装也能用**：没有模型时自动回退 Windows 自带 OCR，只是数字容易读丢几下
+- **OCR 模型必需**：只使用 PaddleOCR，缺少模型会提示补齐模型或重新安装完整版；表格和 PDF 功能不依赖 OCR
 - 出自仓库 [`zibo-chen/ocr-rs`](https://github.com/zibo-chen/ocr-rs) 的 `models/` 目录，MNN 格式可直接用
 - 为什么检测用 medium、识别用 small：见 [`desktop/models/README.md`](desktop/models/README.md)
 

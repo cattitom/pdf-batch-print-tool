@@ -110,7 +110,6 @@ function SequenceBar({ rows, sepPages, copies }: { rows: FileRow[]; sepPages: nu
     if (r.rotate) badges.push(`旋转 ${r.rotate}°`);
     if (r.cropMode === "auto") badges.push("去白边");
     if (r.cropMode === "manual") badges.push("手动裁剪");
-    if (copies > 1) badges.push(`每页 ${copies} 份`);
 
     parts.push(
       <div className="sq-item" key={r.uid}>
@@ -141,6 +140,7 @@ function SequenceBar({ rows, sepPages, copies }: { rows: FileRow[]; sepPages: nu
         <span className="card-title">拼版排布</span>
         <span className="card-sub">
           共 {rows.length} 个文件 · 内容 {contentTotal} 页 + 分隔 {sepTotal} 页
+          {copies > 1 ? ` · 每页 ${copies} 份` : ""}
         </span>
         <div className="spacer" />
         <span className="card-sub">

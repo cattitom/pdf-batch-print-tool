@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm models:check && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,18 +28,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "resources": {
-      "../models/PP-OCRv6_medium_det.mnn": "models/PP-OCRv6_medium_det.mnn",
-      "../models/PP-OCRv6_small_rec.mnn": "models/PP-OCRv6_small_rec.mnn",
-      "../models/ppocr_keys_v6_small.txt": "models/ppocr_keys_v6_small.txt"
-    },
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../models/PP-OCRv6_medium_det.mnn": "models/PP-OCRv6_medium_det.mnn",
+      "../models/PP-OCRv6_small_rec.mnn": "models/PP-OCRv6_small_rec.mnn",
+      "../models/ppocr_keys_v6_small.txt": "models/ppocr_keys_v6_small.txt"
+    }
   }
 }

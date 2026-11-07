@@ -69,3 +69,6 @@ feishu-sample/
 
 # 自签用 IPA
 *.ipa
+
+# 本机验证构建产物
+/desktop/dist-verify/

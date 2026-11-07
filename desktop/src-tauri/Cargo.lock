@@ -1271,6 +1271,7 @@ dependencies = [
  "aes 0.8.4",
  "base64 0.22.1",
  "chrono",
+ "getrandom 0.2.17",
  "hmac",
  "image 0.25.10",
  "local-ip-address",
@@ -1293,7 +1294,6 @@ dependencies = [
  "tiny_http",
  "ts-rs",
  "windows",
- "windows-future",
  "winreg",
 ]
 

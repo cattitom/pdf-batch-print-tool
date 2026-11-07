@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 // ---------- 状态 ----------
 
 pub struct AppState {
-    pub db: Mutex<core::Db>,
+    pub db: std::sync::Arc<Mutex<core::Db>>,
 }
 
 /// 命令错误：前端只依赖 `code`，`message` 用于直接展示。
@@ -61,8 +61,8 @@ pub fn init_state(app: &tauri::App) -> Result<AppState, String> {
         .map_err(|e| format!("无法定位应用数据目录：{e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建应用数据目录：{e}"))?;
     let db = core::Db::open(dir.join("pdf-tool.db"))
-        .map_err(|e| format!("打开数据库失败：{e}"))?;
-    Ok(AppState { db: Mutex::new(db) })
+        .map_err(|e| format!("打开数据库失败（{}）：{e:?}", dir.join("pdf-tool.db").display()))?;
+    Ok(AppState { db: std::sync::Arc::new(Mutex::new(db)) })
 }
 
 fn db<'a>(state: &'a State<AppState>) -> std::sync::MutexGuard<'a, core::Db> {
@@ -175,6 +175,28 @@ pub fn preview_pdf(path: String, dpi: f32, max_pages: u32) -> Result<Vec<String>
 
 // ---------- 拼版 ----------
 
+fn create_output_file(out_path: &str) -> Result<(std::path::PathBuf, std::fs::File), ApiError> {
+    let requested = std::path::PathBuf::from(out_path);
+    let dir = requested.parent().unwrap_or(std::path::Path::new("."));
+    let stem = requested.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let ext = requested.extension().and_then(|s| s.to_str())
+        .map(|s| format!(".{s}")).unwrap_or_default();
+    let mut final_path = requested.clone();
+    let mut suffix = 0u64;
+    let file = loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&final_path) {
+            Ok(file) => break file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                suffix += 1;
+                final_path = dir.join(format!("{stem} ({suffix}){ext}"));
+            }
+            Err(e) => return Err(ApiError::from(core::ImposeError::io(
+                final_path.to_string_lossy().to_string(), e))),
+        }
+    };
+    Ok((final_path, file))
+}
+
 #[tauri::command]
 pub fn impose_pdfs(
     app: AppHandle,
@@ -198,7 +220,8 @@ pub fn impose_pdfs(
         sep_pages: opts.sep_pages,
         sep_text: opts.sep_text,
         page_numbers: opts.page_numbers,
-        copies: opts.copies.max(1),
+        // 下限 1（0 当 1 处理），上限 100 防止绕过 UI 直接传大值把内存撑爆
+        copies: opts.copies.clamp(1, 100),
     };
 
     log::info!(
@@ -211,34 +234,10 @@ pub fn impose_pdfs(
     let t0 = std::time::Instant::now();
 
     // 重名保护：目标已存在（含与源文件同名）时自动加 " (n)" 后缀，绝不覆盖
-    let mut final_path = std::path::PathBuf::from(&out_path);
-    if final_path.exists() {
-        let dir = final_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-        let stem = final_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("output")
-            .to_string();
-        let ext = final_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| format!(".{s}"))
-            .unwrap_or_default();
-        let mut n = 1;
-        loop {
-            let cand = dir.join(format!("{stem} ({n}){ext}"));
-            if !cand.exists() {
-                final_path = cand;
-                break;
-            }
-            n += 1;
-        }
-    }
+    let (final_path, file) = create_output_file(&out_path)?;
     let final_path_str = final_path.to_string_lossy().to_string();
 
-    // 流式写盘：不把整份成品留在内存里；失败时删掉半截文件
-    let file = std::fs::File::create(&final_path)
-        .map_err(|e| ApiError::from(core::ImposeError::io(&final_path_str, e)))?;
+    // Stream into the exclusively created file; never truncate an existing output.
     let mut writer = std::io::BufWriter::new(file);
     let stats = match core::impose_to(&inputs, &core_opts, &|done, total| {
         let _ = app.emit("impose-progress", serde_json::json!({ "done": done, "total": total }));
@@ -630,7 +629,7 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result
 // ---------- 出货清单：已录勾选 ----------
 
 /// 一条勾选记录，按「单号 + 入库号 + 商品名」认行。
-#[derive(Debug, Serialize, ts_rs::TS)]
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct PackingCheckDto {
@@ -643,14 +642,25 @@ pub struct PackingCheckDto {
 #[tauri::command]
 pub fn set_packing_check(
     state: State<AppState>,
+    mobile_state: State<MobileShared>,
     waybill: String,
     inbound: String,
     name: String,
     checked: bool,
 ) -> Result<(), ApiError> {
-    db(&state)
-        .set_packing_check(&waybill, &inbound, &name, checked)
-        .map_err(ApiError::from)
+    set_packing_checks(state, mobile_state, vec![PackingCheckDto { waybill, inbound, name, checked }], None)
+}
+
+#[tauri::command]
+pub fn set_packing_checks(_state: State<AppState>, mobile_state: State<MobileShared>, changes: Vec<PackingCheckDto>, expected: Option<Vec<MobileRow>>) -> Result<(), ApiError> {
+    let changes: Vec<_> = changes.into_iter().map(|r|
+        (r.waybill.trim().to_owned(), r.inbound.trim().to_owned(), r.name.trim().to_owned(), r.checked)
+    ).collect();
+    if changes.iter().any(|(waybill, inbound, _, checked)| *checked && waybill.is_empty() && inbound.is_empty()) {
+        return Err(ApiError::new("invalid", "没有单号和入库号的行不能出货"));
+    }
+    mobile::commit_checks(&mobile_state, &changes, expected.as_deref())
+        .map_err(|(status,message)| ApiError::new(if status == 409 { "conflict" } else { "db" }, message))
 }
 
 #[tauri::command]
@@ -710,7 +720,7 @@ pub struct PackingSheetDto {
     /// 列映射说明：「按表头识别：名称=第1列 …」
     pub mapping: String,
     pub warnings: Vec<String>,
-    /// 截图识别用的引擎："paddle" / "system"；粘贴和 xlsx 路径为空
+    /// 截图识别用的引擎：仅 "paddle"；粘贴和 xlsx 路径为空
     pub engine: String,
 }
 
@@ -771,7 +781,7 @@ pub fn parse_packing_xls(path: String, sheet: Option<String>) -> Result<PackingS
     Ok(parsed.into())
 }
 
-/// 图片（截屏/拍照）→ 结构化待办：走 Windows 自带 OCR，离线免费。
+/// 图片（截屏/拍照）→ 结构化待办：使用 PaddleOCR 离线识别，模型必需。
 #[tauri::command]
 pub fn parse_packing_image(path: String) -> Result<PackingSheetDto, ApiError> {
     #[cfg(windows)]
@@ -862,6 +872,29 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_outputs_never_overwrite_existing_files() {
+        let dir = std::env::temp_dir().join(format!("pdf-output-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&dir).unwrap();
+        let requested = dir.join("output.pdf");
+        std::fs::write(&requested, b"original").unwrap();
+        let handles: Vec<_> = (0..8).map(|_| {
+            let requested = requested.to_string_lossy().to_string();
+            std::thread::spawn(move || {
+                let (path, mut file) = create_output_file(&requested).unwrap();
+                std::io::Write::write_all(&mut file, b"new").unwrap();
+                path
+            })
+        }).collect();
+        let paths: std::collections::HashSet<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(paths.len(), 8);
+        assert_eq!(std::fs::read(&requested).unwrap(), b"original");
+        for path in paths { std::fs::remove_file(path).unwrap(); }
+        std::fs::remove_file(requested).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
     fn impose_dto_wire_format() {
         let f: ImposeFileDto = serde_json::from_value(serde_json::json!({
             "name": "a.pdf", "path": "C:/x/a.pdf",
@@ -873,10 +906,11 @@ mod tests {
         assert_eq!(f.rotate, 90);
 
         let o: ImposeOptsDto = serde_json::from_value(serde_json::json!({
-            "sepPages": 1, "sepText": "这是分隔线", "pageNumbers": false
+            "sepPages": 1, "sepText": "这是分隔线", "pageNumbers": false, "copies": 2
         }))
         .unwrap();
         assert_eq!(o.sep_pages, 1);
+        assert_eq!(o.copies, 2);
     }
 
     /// 箱唛 SKU 之前漏了 camelCase：前端传 pcsPerBox，Rust 按 pcs_per_box 收不到，
@@ -950,11 +984,11 @@ const MOBILE_PORT_KEY: &str = "mobile_port";
 fn mobile_token(state: &State<'_, AppState>) -> Result<String, ApiError> {
     let guard = db(state);
     if let Some(t) = guard.get_setting(MOBILE_TOKEN_KEY).map_err(ApiError::from)? {
-        if t.len() >= 8 {
+        if t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Ok(t);
         }
     }
-    let t = mobile::new_token();
+    let t = mobile::new_token().map_err(|e| ApiError::new("mobile", e))?;
     guard
         .set_setting(MOBILE_TOKEN_KEY, &t)
         .map_err(ApiError::from)?;
@@ -1018,12 +1052,11 @@ pub fn mobile_rows(state: State<'_, MobileShared>) -> Vec<MobileRow> {
 #[tauri::command]
 pub fn mobile_set_check(
     state: State<'_, MobileShared>,
-    waybill: String,
-    inbound: String,
-    name: String,
-    checked: bool,
-) {
-    mobile::set_check(&state, &waybill, &inbound, &name, checked);
+    waybill: String, inbound: String, name: String, checked: bool,
+    expected: Option<Vec<MobileRow>>,
+) -> Result<(), ApiError> {
+    mobile::commit_checks(&state, &[(waybill.trim().into(), inbound.trim().into(), name.trim().into(), checked)], expected.as_deref())
+        .map_err(|(status,message)| ApiError::new(if status == 409 { "conflict" } else { "db" }, message))
 }
 
 #[tauri::command]

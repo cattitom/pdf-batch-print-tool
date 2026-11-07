@@ -1,28 +1,13 @@
-//! 装箱单截图识别：两条引擎，产出同一份「词 + 坐标」。
+//! 装箱单截图识别：PaddleOCR 产出「词 + 坐标」。
 //!
-//! - **PaddleOCR（MNN 推理）**：`models/` 下有 `PP-OCRv6_medium_det.mnn`（最高精度档）或
-//!   `PP-OCRv6_small_det.mnn` / `PP-OCRv5_mobile_det.mnn`（降级档）时优先用，
-//!   中文/数字准确率明显高于系统 OCR；
-//! - **Windows 自带 OCR**（`Windows.Media.Ocr`）：没有模型时的兜底，离线免费、零依赖。
-//!
-//! 两个引擎都只给「词 + 坐标」，不理解表格，所以后面统一补：按 y 聚成行、
+//! 仅使用 PaddleOCR（MNN），模型缺失或识别失败时明确报错。
+//! 识别产出「词 + 坐标」，按 y 聚成行，
 //! 按 x 的空白槽切列，再按内容认角色（商品名 / 数量 / 标记 / 目的地 / 入库号），
 //! 最后交给 [`pdfimpose_core::parse_grid`] 做校验、合并单元格展开和去重。
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::pin;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::task::{Context, Poll, Wake, Waker};
-
+use std::sync::{Arc, Mutex, OnceLock};
 use pdfimpose_core as core;
-use windows::core::HSTRING;
-use windows::Globalization::Language;
-use windows::Graphics::Imaging::BitmapDecoder;
-use windows::Media::Ocr::OcrEngine;
-use windows::Storage::{FileAccessMode, StorageFile};
-use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
-use windows_future::IAsyncOperation;
 
 /// 一个识别出来的词及其外接框（像素）。
 #[derive(Debug, Clone)]
@@ -44,186 +29,6 @@ impl Word {
     fn height(&self) -> f32 {
         self.y1 - self.y0
     }
-}
-
-// ---------- 阻塞等待 WinRT 异步操作 ----------
-//
-// windows-rs 只给 IAsyncOperation 实现 IntoFuture，没有 block_on。
-// 这里用一个最小的 Parker（Mutex + Condvar）把 future 跑完。
-
-struct Parker {
-    ready: Mutex<bool>,
-    cv: Condvar,
-}
-
-impl Wake for Parker {
-    fn wake(self: Arc<Self>) {
-        self.wake_by_ref();
-    }
-    fn wake_by_ref(self: &Arc<Self>) {
-        *self.ready.lock().unwrap() = true;
-        self.cv.notify_all();
-    }
-}
-
-fn block_on<F: Future>(fut: F) -> F::Output {
-    let parker = Arc::new(Parker { ready: Mutex::new(false), cv: Condvar::new() });
-    let waker = Waker::from(parker.clone());
-    let mut cx = Context::from_waker(&waker);
-    let mut fut = pin!(fut);
-    loop {
-        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
-            return v;
-        }
-        let mut ready = parker.ready.lock().unwrap();
-        while !*ready {
-            ready = parker.cv.wait(ready).unwrap();
-        }
-        *ready = false;
-    }
-}
-
-fn wait<T>(op: IAsyncOperation<T>) -> Result<T, String>
-where
-    T: windows::core::RuntimeType + 'static,
-{
-    use std::future::IntoFuture as _;
-    block_on(op.into_future()).map_err(|e| format!("Windows OCR 调用失败：{}", e.message()))
-}
-
-// ---------- 识别 ----------
-
-/// 预处理：按给定倍数放大（小字直接 OCR 掉字严重）。
-/// 试过灰度+二值化：黑边框会和字粘一起，反而更差，所以只做放大。
-fn prepare_image(path: &str, scale: f32) -> Result<std::path::PathBuf, String> {
-    let img = image::open(path).map_err(|e| format!("打不开图片：{e}"))?;
-    let (w, h) = (img.width(), img.height());
-
-    let out = if scale > 1.01 {
-        img.resize(
-            (w as f32 * scale) as u32,
-            (h as f32 * scale) as u32,
-            image::imageops::FilterType::CatmullRom,
-        )
-    } else {
-        img
-    };
-
-    let tmp = std::env::temp_dir().join(format!(
-        "pdfprint-ocr-{}-{}.png",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    out.save(&tmp).map_err(|e| format!("写临时图片失败：{e}"))?;
-    if let Ok(debug) = std::env::var("OCR_DEBUG_PNG") {
-        let _ = out.save(&debug);
-    }
-    Ok(tmp)
-}
-
-/// 放大倍数：目标宽度约 4800px，最多 3.2 倍。
-fn scale_for(img_width: u32) -> f32 {
-    let target = 4800.0f32;
-    if (img_width as f32) < target {
-        (target / img_width as f32).clamp(1.0, 3.2)
-    } else {
-        1.0
-    }
-}
-
-/// 调用系统 OCR，拿回所有词。
-///
-/// 只跑一遍：试过「两个缩放比例各跑一次再按位置合并」，结果尾部会多出
-/// 零碎字符（IN5LK113218I），反而更难用。
-pub fn recognize_words(path: &str) -> Result<Vec<Word>, String> {
-    let width = image::open(path)
-        .map_err(|e| format!("打不开图片：{e}"))?
-        .width();
-    let tmp = prepare_image(path, scale_for(width))?;
-
-    // COM 初始化放在独立线程：Tauri 的命令线程不一定初始化过 COM
-    let tmp_for_thread = tmp.clone();
-    let joined = std::thread::spawn(move || ocr_thread(&tmp_for_thread.to_string_lossy())).join();
-    let _ = std::fs::remove_file(&tmp);
-
-    match joined {
-        Ok(r) => r,
-        Err(_) => Err("OCR 线程异常退出".to_string()),
-    }
-}
-
-fn ocr_thread(path: &str) -> Result<Vec<Word>, String> {
-    // 已经初始化过（返回 RPC_E_CHANGED_MODE）也无所谓，继续用
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-
-    let result = run_ocr(path);
-    unsafe { CoUninitialize() };
-    result
-}
-
-fn run_ocr(path: &str) -> Result<Vec<Word>, String> {
-    let file = wait(
-        StorageFile::GetFileFromPathAsync(&HSTRING::from(path))
-            .map_err(|e| format!("打开图片失败：{}", e.message()))?,
-    )?;
-
-    let stream = wait(
-        file.OpenAsync(FileAccessMode::Read)
-            .map_err(|e| format!("读取图片失败：{}", e.message()))?,
-    )?;
-
-    let decoder = wait(
-        BitmapDecoder::CreateAsync(&stream).map_err(|e| format!("解码图片失败：{}", e.message()))?,
-    )?;
-
-    let bitmap = wait(
-        decoder
-            .GetSoftwareBitmapAsync()
-            .map_err(|e| format!("转位图失败：{}", e.message()))?,
-    )?;
-
-    let engine = match Language::CreateLanguage(&HSTRING::from("zh-Hans-CN"))
-        .map_err(|e| e.message())
-        .and_then(|lang| {
-            OcrEngine::TryCreateFromLanguage(&lang).map_err(|e| e.message())
-        }) {
-        Ok(engine) => engine,
-        Err(_) => OcrEngine::TryCreateFromUserProfileLanguages().map_err(|_| {
-            "这台机器没装中文 OCR 语言包（设置 → 时间和语言 → 语言 → 中文 → 可选功能）".to_string()
-        })?,
-    };
-
-    let result = wait(
-        engine
-            .RecognizeAsync(&bitmap)
-            .map_err(|e| format!("识别失败：{}", e.message()))?,
-    )?;
-
-    let lines = result.Lines().map_err(|e| e.message())?;
-    let mut words = Vec::new();
-    for i in 0..lines.Size().map_err(|e| e.message())? {
-        let line = lines.GetAt(i).map_err(|e| e.message())?;
-        let ws = line.Words().map_err(|e| e.message())?;
-        for j in 0..ws.Size().map_err(|e| e.message())? {
-            let w = ws.GetAt(j).map_err(|e| e.message())?;
-            let text = w.Text().map_err(|e| e.message())?.to_string();
-            let rect = w.BoundingRect().map_err(|e| e.message())?;
-            if text.trim().is_empty() {
-                continue;
-            }
-            words.push(Word {
-                text: text.trim().to_string(),
-                x0: rect.X,
-                y0: rect.Y,
-                x1: rect.X + rect.Width,
-                y1: rect.Y + rect.Height,
-            });
-        }
-    }
-    Ok(words)
 }
 
 // ---------- 词 → 二维表 ----------
@@ -731,7 +536,7 @@ fn to_canonical(grid: &[Vec<String>]) -> Vec<Vec<String>> {
     out
 }
 
-// ---------- PaddleOCR（可选：有 .mnn 模型时优先） ----------
+// ---------- PaddleOCR（模型必需） ----------
 
 /// 模型目录，按优先级找：
 /// 1. exe 同级 `models/`（打包后把模型拷到 exe 旁边）
@@ -745,6 +550,7 @@ fn models_dir() -> Option<PathBuf> {
             candidates.push(dir.join("resources").join("models"));
         }
     }
+    #[cfg(debug_assertions)]
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("models"));
     candidates
         .into_iter()
@@ -894,28 +700,33 @@ fn recognize_words_paddle_with(
         .collect())
 }
 
-/// 当前会用哪个引擎：`"paddle"` / `"system"`。
-pub fn engine_name() -> &'static str {
-    if available_tiers().is_empty() {
-        "system"
-    } else {
-        "paddle"
-    }
+/// 成功识别的引擎始终为 PaddleOCR。
+pub fn engine_name() -> &'static str { "paddle" }
+
+fn require_tiers(tiers: Vec<&'static str>) -> Result<Vec<&'static str>, String> {
+    if tiers.is_empty() {
+        Err("缺少 PaddleOCR 模型，请重新安装完整版，或在开发目录执行 pnpm models:download".into())
+    } else { Ok(tiers) }
 }
 
-/// 通用「图片 → 词」：有 Paddle 模型就用（精度高），没有或失败退回系统 OCR。
-/// 给产品标签照片这类非表格图片用。
+/// 通用图片识别，仅使用 PaddleOCR。
 pub fn recognize_text_words(path: &str) -> Result<Vec<Word>, String> {
-    for tier in available_tiers() {
+    recognize_text_with_tiers(path, available_tiers())
+}
+
+fn recognize_text_with_tiers(path: &str, tiers: Vec<&'static str>) -> Result<Vec<Word>, String> {
+    let tiers = require_tiers(tiers)?;
+    let mut last_error = "PaddleOCR 模型初始化失败，请检查模型文件或重新安装完整版".to_string();
+    for tier in tiers {
         if let Some(engine) = engine_for(tier) {
             match recognize_words_paddle_with(path, &engine) {
                 Ok(words) if !words.is_empty() => return Ok(words),
-                Ok(_) => {}
-                Err(e) => log::warn!("PaddleOCR（{tier}）识别失败：{e}"),
+                Ok(_) => last_error = "PaddleOCR 未识别到文字，请检查图片是否清晰".into(),
+                Err(e) => { log::warn!("PaddleOCR（{tier}）识别失败：{e}"); last_error = e; }
             }
         }
     }
-    recognize_words(path)
+    Err(last_error)
 }
 
 fn is_cjk(c: char) -> bool {
@@ -1041,11 +852,12 @@ fn totals_match(sheet: &core::PackingSheet) -> bool {
 /// 有多档模型时先用最高精度档（v6 medium）；合计对不上时换下一档重跑，
 /// 取能对上合计的那份。medium 在个别小字上会漏字符，单跑一档反而不如这样稳。
 pub fn parse_image(path: &str) -> Result<core::PackingSheet, String> {
-    let tiers = available_tiers();
-    if tiers.is_empty() {
-        let words = recognize_words(path)?;
-        return build_sheet(path, words);
-    }
+    parse_image_with_tiers(path, available_tiers())
+}
+
+fn parse_image_with_tiers(path: &str, tiers: Vec<&'static str>) -> Result<core::PackingSheet, String> {
+    let tiers = require_tiers(tiers)?;
+    let mut last_error = "PaddleOCR 模型初始化失败，请检查模型文件或重新安装完整版".to_string();
 
     let mut fallback: Option<core::PackingSheet> = None;
     for tier in &tiers {
@@ -1055,8 +867,9 @@ pub fn parse_image(path: &str) -> Result<core::PackingSheet, String> {
         };
         let words = match recognize_words_paddle_with(path, &engine) {
             Ok(w) if !w.is_empty() => w,
-            Ok(_) => continue,
+            Ok(_) => { last_error = "PaddleOCR 未识别到文字，请检查图片是否清晰".into(); continue; },
             Err(e) => {
+                last_error = e.clone();
                 log::warn!("档位 {tier} 识别失败：{e}");
                 continue;
             }
@@ -1079,9 +892,7 @@ pub fn parse_image(path: &str) -> Result<core::PackingSheet, String> {
     if let Some(sheet) = fallback {
         return Ok(sheet);
     }
-    log::warn!("PaddleOCR 各档位都不可用，回退系统 OCR");
-    let words = recognize_words(path)?;
-    build_sheet(path, words)
+    Err(last_error)
 }
 
 /// 识别出的词 → 切行切列 → 认列 → core 解析。
@@ -1153,7 +964,7 @@ mod tests {
 
     /// 真截图跑一遍（12 行、168 件、单号 6812704625）。
     ///
-    /// 装了 PaddleOCR 模型时要求**全对**；只有系统 OCR 时放宽（它会读丢格子），
+    /// 使用 PaddleOCR，样例要求完整识别。
     /// 那种情况靠界面标黄 + 人工确认兜底。
     #[test]
     fn ocr_reads_sample_screenshot() {
@@ -1177,25 +988,14 @@ mod tests {
 
         assert_eq!(sheet.waybill, "6812704625", "单号要能从右侧抓出来");
 
-        if engine_name() == "paddle" {
-            assert_eq!(sheet.items.len(), 12, "行数不对：{:?}", dump);
-            assert_eq!(sheet.total_qty, 168, "合计不对：{:?}", dump);
-            assert!(sheet.warnings.is_empty(), "不该有告警：{:?}", sheet.warnings);
-            assert!(
-                sheet.items.iter().all(|i| !i.name.is_empty() && i.qty > 0),
-                "有行没读到名称或数量：{:?}",
-                dump
-            );
-        } else {
-            assert!(sheet.items.len() >= 11, "识别行数太少：{:?}", dump);
-            let with_qty = sheet.items.iter().filter(|i| i.qty > 0).count();
-            assert!(with_qty >= 6, "数量识别率太低（{with_qty}）：{:?}", dump);
-            assert!(
-                sheet.total_qty != 168 || !sheet.warnings.is_empty(),
-                "合计不对却没有告警：{:?}",
-                dump
-            );
-        }
+        assert_eq!(sheet.items.len(), 12, "行数不对：{:?}", dump);
+        assert_eq!(sheet.total_qty, 168, "合计不对：{:?}", dump);
+        assert!(sheet.warnings.is_empty(), "不该有告警：{:?}", sheet.warnings);
+        assert!(
+            sheet.items.iter().all(|i| !i.name.is_empty() && i.qty > 0),
+            "有行没读到名称或数量：{:?}",
+            dump
+        );
     }
 
     /// 第二张真截图（SAM美东 / 6812704706 / 7 行 / 合计 66 件）。
@@ -1282,4 +1082,14 @@ mod tests {
         let grid = words_to_grid(&words);
         for (i, r) in grid.iter().enumerate() { println!("{i:>2} | {}", r.join(" ‖ ")); }
     }
+    #[test]
+    fn missing_models_return_explicit_error() {
+        let text_error = recognize_text_with_tiers("not-opened.png", Vec::new()).unwrap_err();
+        let table_error = parse_image_with_tiers("not-opened.png", Vec::new()).unwrap_err();
+        for error in [text_error, table_error] {
+            assert!(error.contains("缺少 PaddleOCR 模型"));
+            assert!(error.contains("models:download"));
+        }
+    }
+
 }

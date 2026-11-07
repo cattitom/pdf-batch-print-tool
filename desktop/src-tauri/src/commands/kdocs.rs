@@ -13,6 +13,7 @@ use super::{ApiError, PackingSheetDto};
 
 const KDOCS_PULL_MJS: &str = include_str!("../../../../tools/kdocs/kdocs-pull.mjs");
 /// 登录脚本也内嵌：装到别的电脑上时，用户不用去仓库里翻这个 .bat。
+const NODE_RUNTIME_MJS: &str = include_str!("../../../../tools/kdocs/node-runtime.mjs");
 const KDOCS_LOGIN_BAT: &str = include_str!("../../../../kdocs-login.bat");
 
 /// 同一时刻只允许一个同步任务。命令改成 async 之后，后台自动同步和手动点击
@@ -174,13 +175,13 @@ fn spawn_bounded(
 /// 必须是 async：里面要跑 node 取数，几十秒起步。同步命令（非 async）跑在 Tauri 的
 /// 主线程上，会把整个窗口卡成「未响应」——用户看到的就是「双击打不开、卡住」。
 #[tauri::command]
-pub async fn sync_kdocs_packing(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
-    tauri::async_runtime::spawn_blocking(move || sync_kdocs_packing_blocking(sheet))
+pub async fn sync_kdocs_packing(sheet: Option<String>, check_remote: Option<bool>) -> Result<KdocsSyncDto, ApiError> {
+    tauri::async_runtime::spawn_blocking(move || sync_kdocs_packing_blocking(sheet, check_remote.unwrap_or(false)))
         .await
         .map_err(|e| ApiError::new("kdocs", format!("同步任务异常结束：{e}")))?
 }
 
-fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, ApiError> {
+fn sync_kdocs_packing_blocking(sheet: Option<String>, check_remote: bool) -> Result<KdocsSyncDto, ApiError> {
     // 后台轮询和手动点击撞上时，后来的直接返回，不排队再跑一遍
     let _guard = SYNC_LOCK.try_lock().map_err(|e| match e {
         std::sync::TryLockError::WouldBlock => {
@@ -195,11 +196,12 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
     let tools = dir.join("tools");
     let pull_js = tools.join("kdocs-pull.mjs");
     write_script(&pull_js, KDOCS_PULL_MJS)?;
+    write_script(&tools.join("node-runtime.mjs"), NODE_RUNTIME_MJS)?;
 
     let xls = dir.join("kdocs-latest.xls");
 
     // 只是换一张表时不用重新下载：10 分钟内的同一份文件直接复用
-    let reuse = sheet.is_some()
+    let reuse = !check_remote && sheet.is_some()
         && std::fs::metadata(&xls)
             .and_then(|m| m.modified())
             .ok()
@@ -208,7 +210,7 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
             .unwrap_or(false);
 
     let mut changed = true;
-    let mut fver = String::new();
+    let mut fver = std::fs::read_to_string(dir.join("kdocs-latest.xls.fver")).unwrap_or_default().trim().to_owned();
     if !reuse {
         log::info!("云表格同步：开始拉取");
         let ran = match spawn_bounded(
@@ -224,7 +226,7 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
                     e.message
                 );
                 return Err(if e.code == "notfound" {
-                    ApiError::new("kdocs", "找不到 node：取数脚本要 Node.js 18 以上")
+                    ApiError::new("kdocs", "找不到 node：取数脚本要 Node.js 22.12.0 或更高版本")
                 } else {
                     e
                 });
@@ -253,7 +255,7 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
     }
 
     // 直接用 Rust 解 .xls：传了表名就按表名挑，没传就自动挑最新的来货登记表
-    let path = xls.to_string_lossy().to_string();
+    let path = snapshot_kdocs_cache(xls.to_string_lossy().to_string())?;
     let (packing, sheet_name, sheets) = core::parse_xls_file(&path, sheet.as_deref()).map_err(|e| {
         log::warn!(
             "云表格同步：解析 {path} 失败（{} ms）：{}",
@@ -278,6 +280,31 @@ fn sync_kdocs_packing_blocking(sheet: Option<String>) -> Result<KdocsSyncDto, Ap
         fver,
         path,
     })
+}
+
+/// 内容寻址的不可变缓存：后台下载不会覆盖用户上次确认应用的版本。
+#[tauri::command]
+pub fn snapshot_kdocs_cache(path: String) -> Result<String, ApiError> {
+    use sha2::{Digest, Sha256};
+    let source = std::path::Path::new(&path);
+    let bytes = std::fs::read(source).map_err(|e| ApiError::new("kdocs", format!("读取缓存失败：{e}")))?;
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let target = source.parent().unwrap_or(std::path::Path::new("."))
+        .join(format!("kdocs-snapshot-{hash}.xls"));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&target) {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(&bytes).map_err(|e| ApiError::new("kdocs", format!("写入缓存快照失败：{e}")))?;
+            file.sync_all().map_err(|e| ApiError::new("kdocs", format!("保存缓存快照失败：{e}")))?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
+                return Err(ApiError::new("kdocs", "缓存快照不完整，请移走损坏的快照后重试"));
+            }
+        }
+        Err(e) => return Err(ApiError::new("kdocs", format!("创建缓存快照失败：{e}"))),
+    }
+    Ok(target.to_string_lossy().to_string())
 }
 
 /// 打开 WPS 云表格登录窗口（kdocs-login.bat 的副本）。
@@ -313,4 +340,28 @@ pub fn open_kdocs_login() -> Result<String, ApiError> {
 
     log::info!("WPS 登录：启动 {display}");
     Ok(display)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn snapshots_survive_later_download_overwrites() {
+        let dir = std::env::temp_dir().join(format!("cloud-snapshot-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&dir).unwrap();
+        let source = dir.join("kdocs-latest.xls");
+        std::fs::write(&source, b"version-one").unwrap();
+        let old = snapshot_kdocs_cache(source.to_string_lossy().into()).unwrap();
+        std::fs::write(&source, b"version-two").unwrap();
+        let new = snapshot_kdocs_cache(source.to_string_lossy().into()).unwrap();
+        assert_ne!(old,new);
+        assert_eq!(std::fs::read(&old).unwrap(), b"version-one");
+        assert_eq!(std::fs::read(&new).unwrap(), b"version-two");
+        assert_eq!(snapshot_kdocs_cache(source.to_string_lossy().into()).unwrap(), new);
+        std::fs::remove_file(source).unwrap();
+        std::fs::remove_file(old).unwrap();
+        std::fs::remove_file(new).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 }

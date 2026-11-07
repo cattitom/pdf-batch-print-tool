@@ -820,9 +820,7 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
-tr.packing-row-blocked > td {
-  opacity: 0.6;
-}
+
 
 /* 导入出货截图弹窗 */
 .ship-drop {
@@ -954,3 +952,30 @@ tr.packing-row-blocked > td {
   max-height: none !important;
   overflow-y: auto;
 }
+
+/* 缺入库号用明确标记，不降低整行文字可读性。 */
+tr.packing-row-missing-inbound > td:first-child {
+  box-shadow: inset 3px 0 #d99026;
+}
+.inbound-cell .ant-space-item:last-child { min-width: 0; }
+.inbound-cell.missing .ant-input {
+  background: #fff5e6;
+  border-radius: 5px;
+  color: #995d0a;
+}
+.inbound-cell.missing .ant-input::placeholder {
+  color: #995d0a;
+  font-family: inherit;
+  font-size: 12px;
+}
+.inbound-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38966c;
+}
+.packing-history-label { display: inline-block; font-size: 11px; padding: 1px 6px; border: 1px solid #b7cce5; border-radius: 4px; color: #42658c; background: #edf4fc; margin-right: 5px; font-weight: 400; }
+tr.packing-row-history > td { background: #f6f9fd; }
+
+.packing-unnamed-label { display: inline-block; padding: 2px 6px; border-radius: 4px; color: #995d0a; background: #fff3dc; border: 1px solid #f0d49d; font-size: 11px; }

@@ -791,7 +791,13 @@ impl Book {
         let Some(&font) = self.xfs.get(xf) else {
             return false;
         };
-        let Some(&color) = self.fonts.get(font as usize) else {
+        // BIFF 保留字体编号 4，但文件中没有对应 FONT 记录。
+        let font_record = match font {
+            4 => return false,
+            5.. => font as usize - 1,
+            _ => font as usize,
+        };
+        let Some(&color) = self.fonts.get(font_record) else {
             return false;
         };
         // 调色板索引 >= 64 是系统色（原表基本不用），说不清就不算红
@@ -831,4 +837,22 @@ pub fn is_xls(path: &str) -> bool {
         })
         .map(|head| head == CFB_MAGIC)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod font_index_tests {
+    use super::*;
+    #[test]
+    fn biff_reserved_font_index_does_not_shift_red_detection() {
+        let book = Book {
+            wb: vec![], names: vec![], sst: vec![],
+            xfs: vec![0, 4, 5, 6],
+            fonts: vec![10, 8, 8, 8, 40, 10],
+            palette: HashMap::new(),
+        };
+        assert!(book.is_red(0));
+        assert!(!book.is_red(1), "保留编号不能读取下一种字体");
+        assert!(!book.is_red(2), "编号 5 对应第 5 条字体记录，颜色 40 不是红色");
+        assert!(book.is_red(3), "真正的红色仍须识别");
+    }
 }

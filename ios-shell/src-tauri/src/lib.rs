@@ -85,27 +85,27 @@ pub struct Peer {
     /// 电脑名（电脑端 TXT/应答里带，老版本电脑没有就是空）
     #[serde(default)]
     pub name: String,
-    /// 已经拼好口令，前端直接塞 iframe 就行
+    /// 仅服务地址，授权链接必须从扫码或本机历史取得
     pub url: String,
 }
 
 #[derive(Deserialize)]
 struct Reply {
     port: u16,
-    token: String,
     #[serde(default)]
     name: Option<String>,
 }
 
 fn make_peer(reply: &Reply, from: std::net::SocketAddr) -> Option<Peer> {
-    if reply.port == 0 || reply.token.is_empty() {
+    if reply.port == 0 {
         return None;
     }
     let host = from.ip().to_string();
     let base = format!("http://{host}:{}", reply.port);
-    let token = reply.token.clone();
+    // 发现数据不能授予访问权限，凭证只从扫码后的本机历史读取。
+    let token = String::new();
     Some(Peer {
-        url: format!("{base}/?t={token}"),
+        url: format!("{base}/"),
         host,
         port: reply.port,
         token,
@@ -121,7 +121,7 @@ fn decode(buf: &[u8], from: std::net::SocketAddr) -> Result<Option<Peer>, String
     }
 }
 
-/// 往局域网广播暗号，等电脑回 {port, token}。找不到就报错，前端显示原因。
+/// 往局域网广播发现请求，只接收电脑地址，不接收访问凭证。
 fn discover_blocking() -> Result<Peer, String> {
     let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| format!("建 UDP socket 失败：{e}"))?;
     sock.set_broadcast(true)
@@ -214,13 +214,13 @@ async fn discover_peer() -> Result<Peer, String> {
         #[cfg(target_os = "ios")]
         {
             match bonjour::discover(Duration::from_secs(3)) {
-                Ok((host, port, token, name)) => {
+                Ok((host, port, _token, name)) => {
                     let base = format!("http://{host}:{port}");
                     return Ok(Peer {
-                        url: format!("{base}/?t={token}"),
+                        url: format!("{base}/"),
                         host,
                         port,
-                        token,
+                        token: String::new(),
                         name,
                     });
                 }

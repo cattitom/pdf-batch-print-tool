@@ -12,6 +12,9 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { assertNodeRuntime } from "./node-runtime.mjs";
+try { assertNodeRuntime(); } catch (error) { console.error(error.message); process.exit(2); }
+
 
 const args = process.argv.slice(2);
 const outFile = args.find((a) => !a.startsWith("--"));

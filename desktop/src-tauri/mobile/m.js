@@ -499,10 +499,12 @@
         waybill: r.waybill,
         inbound: r.inbound,
         name: r.name,
+        sourceId: r.sourceId, recordId: r.recordId, datasetId: r.datasetId, version: r.version,
         checked: checked,
       }),
     }).then(function (res) {
-      if (!res.ok) throw new Error("http " + res.status);
+      if (!res.ok) return res.json().then(function (data) { throw new Error(data.error || "保存失败"); });
+      r.version += 1;
     });
   }
 
@@ -526,11 +528,12 @@
       .then(function () {
         setSync(nowText());
       })
-      .catch(function () {
+      .catch(function (error) {
         r.checked = !next;
         paintRow(r);
         updateDocNumbers();
-        toast("没保存上，检查一下是不是断了");
+        toast(error.message || "没保存上，请刷新核对后重试");
+        load(false);
         setSync("连接断开 · 点右上角刷新", true);
       })
       .finally(function () {
@@ -564,7 +567,8 @@
         setTimeout(showList, 450);
       })
       .catch(function () {
-        toast("有一行没保存上，再试一次");
+        toast("有一行未保存，请刷新核对后重试");
+        load(false);
         setSync("连接断开 · 点右上角刷新", true);
         updateDocNumbers();
       })

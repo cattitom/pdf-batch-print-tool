@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
+import type { KdocsSyncDto } from "../../bindings/KdocsSyncDto";
 import type { PackingSheetDto } from "../../bindings/PackingSheetDto";
 
 /** 有更新就直接换表（"1"）；默认关 = 只提示，等你点。 */
@@ -10,6 +11,23 @@ export const KEY_KDOCS_LAST = "kdocs_last_xlsx";
 export const KEY_KDOCS_SHEET = "kdocs_last_sheet";
 export const KEY_KDOCS_FVER = "kdocs_last_fver";
 export const KEY_KDOCS_SHEETS = "kdocs_last_sheets";
+
+/** 当前已应用版本一次写入，避免表名、版本和路径只保存了一半。 */
+export const KEY_KDOCS_APPLIED = "kdocs_applied_cache";
+type CacheState = { sheet: string; sheets: string[]; fver: string; path: string };
+export function readCloudCache(settings: Record<string, string>): CacheState {
+  try {
+    const value = JSON.parse(settings[KEY_KDOCS_APPLIED] || "null");
+    if (value && typeof value.sheet === "string" && typeof value.path === "string" && typeof value.fver === "string" &&
+        Array.isArray(value.sheets) && value.sheets.every((s: unknown) => typeof s === "string")) return value;
+  } catch { /* 兼容旧版缓存 */ }
+  let sheets: string[] = [];
+  try { const parsed: unknown = JSON.parse(settings[KEY_KDOCS_SHEETS] || "[]");
+    if (Array.isArray(parsed)) sheets = parsed.filter((s): s is string => typeof s === "string");
+  } catch { /* 旧列表损坏不影响按名称恢复 */ }
+  return { sheet: settings[KEY_KDOCS_SHEET] || "", sheets,
+    fver: settings[KEY_KDOCS_FVER] || "", path: settings[KEY_KDOCS_LAST] || "" };
+}
 
 /** 后台检查的间隔：10 分钟问一次版本号，没变后端连文件都不碰。 */
 const CHECK_EVERY_MS = 10 * 60 * 1000;
@@ -62,7 +80,14 @@ export type CloudSync = {
  */
 export function useCloudSync(opts: Options): CloudSync {
   const [syncing, setSyncing] = useState(false);
-  const [cloudSheet, setCloudSheet] = useState<string | null>(null);
+  const [cloudSheet, updateCloudSheet] = useState<string | null>(null);
+  const sheetRef = useRef<string | null>(null);
+  const appliedRef = useRef<CacheState | null>(null);
+  const pendingRef = useRef<KdocsSyncDto | null>(null);
+  const setCloudSheet = useCallback((value: string | null) => {
+    sheetRef.current = value;
+    updateCloudSheet(value);
+  }, []);
   const [cloudSheets, setCloudSheets] = useState<string[]>([]);
   const [cloudUpdate, setCloudUpdate] = useState<string | null>(null);
 
@@ -74,83 +99,90 @@ export function useCloudSync(opts: Options): CloudSync {
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
+  const ensureApplied = async () => {
+    if (appliedRef.current) return appliedRef.current;
+    const cache = readCloudCache(await api.allSettings());
+    if (cache.path) {
+      cache.path = await api.snapshotKdocsCache(cache.path);
+      await api.setSetting(KEY_KDOCS_APPLIED, JSON.stringify(cache));
+    }
+    appliedRef.current = cache;
+    if (!sheetRef.current) setCloudSheet(cache.sheet || null);
+    return cache;
+  };
+
   const sync = useCallback(async (sheetName?: string, o?: SyncOpts) => {
     const background = o?.background ?? false;
     const applyAnyway = o?.applyAnyway ?? false;
-    if (background && busyRef.current) return; // 别叠着拉
+    if (busyRef.current) return;
     busyRef.current = true;
     setSyncing(true);
     try {
-      const r = await api.syncKdocsPacking(sheetName ?? null);
-      setCloudSheet(r.sheet);
-      setCloudSheets(r.sheets);
-      // 记下这份表：下次启动先把它解析出来，进门就有内容，不用先点同步
-      api.setSetting(KEY_KDOCS_SHEET, r.sheet).catch(() => {});
-      api.setSetting(KEY_KDOCS_FVER, r.fver).catch(() => {});
-      api.setSetting(KEY_KDOCS_LAST, r.path).catch(() => {});
-      api.setSetting(KEY_KDOCS_SHEETS, JSON.stringify(r.sheets)).catch(() => {});
+      let applied: CacheState;
+      try { applied = await ensureApplied(); }
+      catch (e) {
+        // 缓存丢失时允许重新取数；读取设置失败则不悄悄覆盖用户选择。
+        const settings = await api.allSettings();
+        applied = readCloudCache(settings);
+        appliedRef.current = applied;
+        if (!sheetRef.current) setCloudSheet(applied.sheet || null);
+        if (!applyAnyway && background && optsRef.current.hasRows()) throw e;
+      }
+      const wanted = sheetName ?? sheetRef.current ?? undefined;
+      const pending = pendingRef.current;
+      const r = !background && pending && (!wanted || wanted === pending.sheet)
+        ? pending : await api.syncKdocsPacking(wanted ?? null, background || sheetName === undefined);
+      failRef.current = false;
       const cur = optsRef.current;
-      if (background && !applyAnyway) {
-        if (!r.changed) return; // 云端没改，别打扰
-        if (cur.hasExternalFile() || !cur.autoSync) {
-          // 手上这张是你自己挑的文件，或者你没让「有更新就换」：只提示
-          setCloudUpdate(r.fver);
-          cur.onHint(
-            `云表格有新数据${r.fver ? `（版本 ${r.fver}）` : ""}，点上面的提示换最新`,
-          );
+      if (background) {
+        const changed = r.path !== applied.path || r.sheet !== applied.sheet || r.fver !== applied.fver;
+        if (!changed && !applyAnyway) return;
+        if (cur.hasExternalFile() || (!applyAnyway && !cur.autoSync)) {
+          pendingRef.current = r;
+          setCloudUpdate(r.fver || "待确认");
+          cur.onHint(`云表格有新数据${r.fver ? `（版本 ${r.fver}）` : ""}，确认后才会替换当前表格`);
           return;
         }
       }
+      const cache = { sheet: r.sheet, sheets: r.sheets, fver: r.fver, path: r.path };
+      // 仅确认应用后才更新当前版本的缓存元数据。
+      await api.setSetting(KEY_KDOCS_APPLIED, JSON.stringify(cache));
       cur.onApplied(r.packing);
+      appliedRef.current = cache;
+      setCloudSheet(r.sheet);
+      setCloudSheets(r.sheets);
+      pendingRef.current = null;
       setCloudUpdate(null);
       const n = r.packing.items.length;
-      cur.onHint(
-        n === 0
-          ? `云表格「${r.sheet.trim()}」里没有能用的出货行，换一张表试试`
-          : `已从云表格同步「${r.sheet.trim()}」：${n} 条待办`,
-      );
+      cur.onHint(n === 0 ? `云表格「${r.sheet.trim()}」里没有能用的出货行，换一张表试试`
+        : `已从云表格同步「${r.sheet.trim()}」：${n} 条待办`);
     } catch (e) {
       const cur = optsRef.current;
-      if (background) {
-        if (!failRef.current) {
-          failRef.current = true;
-          cur.onHint(`云表格检查失败：${cur.errorText(e)}`);
-        }
-        return;
+      if (!background) cur.onError(e);
+      else if (!failRef.current) {
+        failRef.current = true;
+        cur.onHint(`云表格检查失败：${cur.errorText(e)}`);
       }
-      cur.onError(e);
     } finally {
       busyRef.current = false;
       setSyncing(false);
     }
   }, []);
 
-  /** 直接读上次下载的 .xls：不碰 Chrome、不问版本号，测试时省得每次去云端拉。 */
   const openCached = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setSyncing(true);
     try {
-      const s = await api.allSettings();
-      const path = (s[KEY_KDOCS_LAST] || "").trim();
-      if (!path) {
-        throw new Error("还没有缓存文件：先点一次「从云表格同步」");
-      }
-      const sheetName = (s[KEY_KDOCS_SHEET] || "").trim();
-      const sheet = await api.parsePackingXls(path, sheetName || null);
-      const cur = optsRef.current;
-      cur.onApplied(sheet);
-      setCloudSheet(sheetName || null);
-      setCloudUpdate(null);
-      const n = sheet.items.length;
-      cur.onHint(
-        n === 0
-          ? `本地缓存里没有能用的出货行（${path}）`
-          : `已用本地缓存${sheetName ? `「${sheetName}」` : ""}：${n} 条待办（没联网）`,
-      );
-    } catch (e) {
-      optsRef.current.onError(e);
-    } finally {
-      setSyncing(false);
-    }
+      const cache = await ensureApplied();
+      if (!cache.path) throw new Error("还没有缓存文件：先点一次「从云表格同步」");
+      const sheet = await api.parsePackingXls(cache.path, cache.sheet || null);
+      optsRef.current.onApplied(sheet);
+      setCloudSheet(cache.sheet || null);
+      setCloudSheets(cache.sheets);
+      optsRef.current.onHint(`已用本地缓存「${cache.sheet}」：${sheet.items.length} 条待办（没联网）`);
+    } catch (e) { optsRef.current.onError(e); }
+    finally { busyRef.current = false; setSyncing(false); }
   }, []);
 
   /** 定时后台问版本号：没变什么都不做，变了亮提示（换不换由「有更新自动换表」决定）。 */

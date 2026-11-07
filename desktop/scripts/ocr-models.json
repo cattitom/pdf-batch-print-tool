@@ -1,0 +1,20 @@
+[
+  {
+    "name": "PP-OCRv6_medium_det.mnn",
+    "bytes": 31078716,
+    "sha256": "a174009ef81dd84f29034047cd56e50b73ef624a3a409226418be63ffc46ca60",
+    "url": "https://raw.githubusercontent.com/zibo-chen/ocr-rs/next/models/PP-OCRv6_medium_det.mnn"
+  },
+  {
+    "name": "PP-OCRv6_small_rec.mnn",
+    "bytes": 10646760,
+    "sha256": "ed59cc294fe2d564bd64f929b5356b70abd0977f99e7e60e3b08cfeef4ef72be",
+    "url": "https://raw.githubusercontent.com/zibo-chen/ocr-rs/next/models/PP-OCRv6_small_rec.mnn"
+  },
+  {
+    "name": "ppocr_keys_v6_small.txt",
+    "bytes": 74947,
+    "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+    "url": "https://raw.githubusercontent.com/zibo-chen/ocr-rs/next/models/ppocr_keys_v6_small.txt"
+  }
+]

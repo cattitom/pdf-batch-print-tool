@@ -1,3 +1,8 @@
+import { usePackingArchive } from "./packing/usePackingArchive";
+import { withArchiveRows, HISTORY_ISSUE } from "./packing/archiveRows";
+import { PackingSaveStatus } from "./packing/PackingSaveStatus";
+import { rowKey } from "./packing/recordKey";
+import { usePackingChecks } from "./packing/usePackingChecks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StatsModal, type CustomerStat } from "./packing/StatsModal";
 import { MobileSheetModal } from "./packing/MobileSheetModal";
@@ -6,9 +11,7 @@ import { LogModal } from "./packing/LogModal";
 import {
   useCloudSync,
   KEY_KDOCS_AUTO_SYNC,
-  KEY_KDOCS_LAST,
-  KEY_KDOCS_SHEET,
-  KEY_KDOCS_SHEETS,
+  readCloudCache,
 } from "./packing/useCloudSync";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -37,11 +40,11 @@ import {
   FileTextOutlined,
   FilterFilled,
   FolderOpenOutlined,
-  HistoryOutlined,
   ImportOutlined,
   InboxOutlined,
   LoginOutlined,
   MobileOutlined,
+  MoreOutlined,
   PieChartOutlined,
   PushpinOutlined,
   ReloadOutlined,
@@ -134,7 +137,7 @@ function ColumnFilter({
  */
 
 const ISSUE_TEXT: Record<string, string> = {
-  name: "商品名空",
+  name: "待补商品名",
   qty: "数量没读到",
   inbound: "入库号空",
   inbound_sci: "入库号像数值",
@@ -227,11 +230,10 @@ function parseWaybillPatch(raw?: string): Record<string, string> {
 }
 
 /** 既没入库号也没单号：客户还没给箱唛，货还不能发——灰着、不让标已出，但照常算未出/进手机/进导出。 */
-const rowBlocked = (r: PackingItemDto) => !r.inbound.trim() && !r.waybill.trim();
+const rowBlocked = (r: PackingItemDto) => !r.inbound.trim() || !r.waybill.trim();
 
 /** 一行货物的稳定指纹：同一票、同入库号、同商品名，重新解析后还能认回来。 */
-const rowKey = (r: PackingItemDto) =>
-  `${r.waybill.trim()}|${r.inbound.trim()}|${r.name.trim()}`;
+
 
 /** 按单号分块（出货是按票出的），块头带箱数和款数。 */
 function toMarkdown(rows: PackingItemDto[]): string {
@@ -308,12 +310,15 @@ export default function PackingPage({
   active?: boolean;
 }) {
   const [rows, setRows] = useState<PackingItemDto[]>([]);
+  const { archiveError, archiveItems } = usePackingArchive(rows);
   const [sheet, setSheet] = useState<PackingSheetDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mobileVersionsRef = useRef<MobileRowDto[]>([]);
+  const sheetGenerationRef = useRef<string>(crypto.randomUUID());
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
-  /** 结果来自截图 OCR：必须提示人工核对（系统 OCR 会读丢个别格子） */
+  /** 结果来自截图 OCR：必须提示人工核对（识别结果需核对） */
   const [fromOcr, setFromOcr] = useState(false);
   /** 单号筛选：空数组 = 全部；可多选 */
   const [pickedWaybills, setPickedWaybills] = useState<string[]>([]);
@@ -326,6 +331,7 @@ export default function PackingPage({
 
   /** 出货状态记忆：指纹 → 是否已出。启动时从数据库读一次，点一下逐条写回。 */
   const checkedRef = useRef<Record<string, boolean>>({});
+  const externalFileRef = useRef(false);
   /** 本地手改的单号（`入库号|商品名` → 单号），解析完铺表时套上去。 */
   const waybillPatchRef = useRef<Record<string, string>>({});
   /** 手机出货的轮询里要读最新 rows，避免闭包拿到旧表 */
@@ -347,6 +353,7 @@ export default function PackingPage({
   const [scanHint, setScanHint] = useState<string | null>(null);
   /** 只看有问题的行 */
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [inboundStatus, setInboundStatus] = useState<"all" | "present" | "missing">("all");
   /** 多选的行指纹（批量标记 / 复制用） */
   const [selected, setSelected] = useState<string[]>([]);
   /** 手机出货：局域网服务信息 + 弹窗 */
@@ -366,6 +373,10 @@ export default function PackingPage({
   /** 任务号（按单号分组），识别成功后生成，手机端领取用 */
   const [shipTasks, setShipTasks] = useState<ShipTask[]>([]);
   const [mobileInfo, setMobileInfo] = useState<MobileInfoDto | null>(null);
+  const { savingChecks, checkFailure, savingChecksRef, saveChecks, applyMobileSnapshot, discardFailure } = usePackingChecks({
+    rowsRef, checkedRef, mobileVersionsRef, sheetGenerationRef, setRows, setSavedPath, setError,
+    mobilePort: mobileInfo?.port,
+  });
   /** 钉住的行指纹（表格上方的钉住条） */
   const [pinned, setPinned] = useState<string[]>([]);
   /** 钉住条是否展开 */
@@ -439,6 +450,8 @@ export default function PackingPage({
   );
   const visibleOrder = shownOrder.filter((i) => {
     const r = rows[i];
+    if (inboundStatus === "present" && !r.inbound.trim()) return false;
+    if (inboundStatus === "missing" && r.inbound.trim()) return false;
     if (taskOnly && !taskSet.has(r.inbound.trim())) return false;
     if (onlyIssues && !r.issues.some((c) => PROBLEM_ISSUES.has(c))) return false;
     if (kw) {
@@ -541,7 +554,7 @@ export default function PackingPage({
   // 筛选条件一变就清空多选，避免批量操作作用到看不见的行
   useEffect(() => {
     setSelected([]);
-  }, [q, pickedWaybills, onlyIssues, foldChecked]);
+  }, [q, pickedWaybills, onlyIssues, foldChecked, inboundStatus]);
 
   /** 看板两列：未出 / 已出（跟当前单号筛选一致） */
   const pendingRows = visibleOrder
@@ -609,8 +622,9 @@ export default function PackingPage({
       (d): d is PackingRow =>
         !isFold(d) && selected.includes(rowKey(d)) && !d.checked && !rowBlocked(d)
     );
-    targets.forEach((d) => patch(d.__idx, { checked: true }));
-    setSelected([]);
+    void saveChecks(targets.map((d) => ({ ...d, checked: true }))).then((ok) => {
+      if (ok) setSelected([]);
+    });
   };
 
   const copySelected = async () => {
@@ -739,11 +753,16 @@ export default function PackingPage({
           );
         }
         return (
+          <div>
+          {r.issues.includes(HISTORY_ISSUE) && <span className="packing-history-label" title="原表中已无此记录，由本地数据库保留；出货状态为保存记录">历史存档</span>}
+          {!v.trim() && <span className="packing-unnamed-label" title="原表商品名称为空，数量仍计入合计，请核对并补充名称">待补商品名 · 已计入数量</span>}
           <Input
             variant="borderless"
             value={v}
+            placeholder="点击补充商品名称"
             onChange={(e) => patch(r.__idx, { name: e.target.value })}
           />
+          </div>
         );
       },
     },
@@ -777,7 +796,7 @@ export default function PackingPage({
             disabled={!v && rowBlocked(r)}
             title={
               !v && rowBlocked(r)
-                ? "没有入库号也没有单号，不能出货"
+                ? "入库号和单号必须都填写，才能出货"
                 : v
                   ? "点一下改回未出"
                   : "点一下标记已出"
@@ -842,13 +861,16 @@ export default function PackingPage({
     {
       title: filterTitle("入库号", "inbound", inboundOptions),
       dataIndex: "inbound",
-      width: 150,
+      width: 190,
       render: (v: string, r: TableRow) =>
         isFold(r) ? null : (
-          <Space size={4}>
+          <Space size={4} className={v.trim() ? "inbound-cell present" : "inbound-cell missing"}>
+            {v.trim() && <span className="inbound-dot" aria-label="已有入库号" />}
             <Input
               variant="borderless"
               value={v}
+              placeholder="待补入库号"
+              aria-label="入库号"
               style={monoStyle}
               onChange={(e) => patch(r.__idx, { inbound: e.target.value })}
             />
@@ -917,10 +939,22 @@ export default function PackingPage({
     },
   ];
 
-  const applySheet = (s: PackingSheetDto) => {
+  useEffect(() => {
+    if (!archiveItems.length) return;
+    setRows((current) => {
+      const merged = withArchiveRows(current, archiveItems);
+      rowsRef.current = merged;
+      return merged;
+    });
+  }, [archiveItems]);
+
+  const applySheet = (s: PackingSheetDto, external = false) => {
+    externalFileRef.current = external;
+    sheetGenerationRef.current = crypto.randomUUID();
+    mobileVersionsRef.current = [];
     // 原表里「产品名称 → 入库号」刷红字的就是已出货：这是原表作者亲手标的，比本地点出来的可信，
     // 所以红字的行直接用解析结果（本地旧记录不覆盖它）；其余行再把之前勾过的状态按指纹认回来。
-    const items = s.items.map((it) => {
+    const liveItems = s.items.map((it) => {
       // 原表没写单号的行，这里先套上本地手改的那一个（测试 / 客户事后补单号都用得上）
       const local = waybillPatchRef.current[waybillPatchKey(it)];
       const row = local ? { ...it, waybill: local } : it;
@@ -931,7 +965,9 @@ export default function PackingPage({
         (local ? checkedRef.current[rowKey(it)] : undefined);
       return saved === undefined ? row : { ...row, checked: saved };
     });
+    const items = withArchiveRows(liveItems, archiveItems);
     setSheet(s);
+    rowsRef.current = items;
     setRows(items);
     setSelected([]);
     setOnlyIssues(false);
@@ -953,7 +989,6 @@ export default function PackingPage({
     setCloudSheet,
     setCloudSheets,
     sync,
-    openCached,
   } = useCloudSync({
     autoSync,
     onApplied: (sheet) => {
@@ -965,17 +1000,18 @@ export default function PackingPage({
     onHint: setScanHint,
     onError: (e) => setError(errorText(e) + errorHint(e)),
     errorText,
-    hasExternalFile: () => savedPath !== null,
+    hasExternalFile: () => externalFileRef.current,
     hasRows: () => rowsRef.current.length > 0,
   });
 
   /** 解析一个本地路径（文件选择器和「自动打开上次」共用）。 */
   const loadFromPath = async (path: string, silent = false) => {
+    externalFileRef.current = true;
     const isImage = IMAGE_EXT.test(path);
     try {
       setBusy(true);
       const s = isImage ? await api.parsePackingImage(path) : await api.parsePackingFile(path);
-      applySheet(s);
+      applySheet(s, true);
       setFromOcr(isImage);
       setError(null);
       setSavedPath(null);
@@ -1007,21 +1043,23 @@ export default function PackingPage({
       setAutoSync(s[KEY_KDOCS_AUTO_SYNC] === "1");
       // 上面那个「启动时打开上次文件」要是会打开文件，就别用云缓存抢它的位置
       const localFile = s[KEY_AUTO_OPEN] !== "0" && !!s[KEY_LAST_FILE];
-      const lastPath = localFile ? "" : s[KEY_KDOCS_LAST];
+      if (localFile) externalFileRef.current = true;
+      const cache = readCloudCache(s);
+      const lastPath = localFile ? "" : cache.path;
       let restored = false;
       if (lastPath) {
         // 先把「已录」记忆读出来，铺表时才能把勾选认回来（跟另一个挂载 effect 读的是同一份）
         try {
           const list = await api.listPackingChecks();
           const m: Record<string, boolean> = {};
-          for (const c of list) m[`${c.waybill}|${c.inbound}|${c.name}`] = c.checked;
+          for (const c of list) m[rowKey(c)] = c.checked;
           checkedRef.current = m;
         } catch {
           // 读不到就按表里自带的来
         }
         try {
           // .xls 缓存要按上次那张表恢复（表按月排，不指定就会跳到最新那张）
-          const wantSheet = (s[KEY_KDOCS_SHEET] || "").trim();
+          const wantSheet = cache.sheet.trim();
           const sheet = /\.xls$/i.test(lastPath)
             ? await api.parsePackingXls(lastPath, wantSheet || null)
             : await api.parsePackingFile(lastPath);
@@ -1029,16 +1067,16 @@ export default function PackingPage({
           applySheet(sheet);
           setFromOcr(false);
           restored = true;
-          setCloudSheet(s[KEY_KDOCS_SHEET] || null);
+          setCloudSheet(cache.sheet || null);
           try {
-            const list: unknown = JSON.parse(s[KEY_KDOCS_SHEETS] || "[]");
+            const list: unknown = cache.sheets;
             if (Array.isArray(list)) {
               setCloudSheets(list.filter((x): x is string => typeof x === "string"));
             }
           } catch {
             // 表名列表坏了不影响用表
           }
-          const name = (s[KEY_KDOCS_SHEET] || "").trim();
+          const name = cache.sheet.trim();
           setScanHint(
             `已载入上次同步的云表格${name ? `「${name}」` : ""}：${sheet.items.length} 条待办`,
           );
@@ -1087,8 +1125,13 @@ export default function PackingPage({
     await loadFromPath(picked);
   };
 
-  /** 重新解析上次打开过的文件：文件更新了不用再选一遍。 */
+  /** 刷新当前数据源：云表格重新同步，本地文件重新解析。 */
   const refreshLast = async () => {
+    if (busy || syncing || !sheet) return;
+    if (!externalFileRef.current) {
+      await sync(cloudSheet ?? undefined, { applyAnyway: true });
+      return;
+    }
     let last = "";
     try {
       const saved = await api.allSettings();
@@ -1106,6 +1149,7 @@ export default function PackingPage({
   /** 清空这次的结果（不动「已录」记忆）。 */
   const clearAll = () => {
     setSheet(null);
+    externalFileRef.current = false;
     setRows([]);
     setSelected([]);
     setOnlyIssues(false);
@@ -1121,7 +1165,7 @@ export default function PackingPage({
         const list = await api.listPackingChecks();
         const m: Record<string, boolean> = {};
         for (const c of list) {
-          m[`${c.waybill}|${c.inbound}|${c.name}`] = c.checked;
+          m[rowKey(c)] = c.checked;
         }
         checkedRef.current = m;
       } catch {
@@ -1178,7 +1222,7 @@ export default function PackingPage({
     });
   }, [pinned]);
 
-  /** 拖进来的文件：图片走系统 OCR，xlsx / csv / txt 直接解析。 */
+  /** 拖进来的文件：图片走 PaddleOCR，xlsx / csv / txt 直接解析。 */
   useEffect(() => {
     const paths = pendingDrop?.paths ?? [];
     if (paths.length === 0) return;
@@ -1198,7 +1242,7 @@ export default function PackingPage({
         setBusy(true);
         const s = isImage ? await api.parsePackingImage(path) : await api.parsePackingFile(path);
         if (cancelled) return;
-        applySheet(s);
+        applySheet(s, true);
         setFromOcr(isImage);
         setError(null);
         setSavedPath(null);
@@ -1218,26 +1262,15 @@ export default function PackingPage({
   }, [pendingDrop?.nonce]);
 
   const patch = (i: number, p: Partial<PackingItemDto>) => {
-    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, ...p } : r)));
-    // 勾选状态按指纹记进数据库，下次打开同一份表还能认回来
+    const row = rowsRef.current[i];
+    if (!row) return;
     if (p.checked !== undefined) {
-      const row = rows[i];
-      if (row) {
-        checkedRef.current[rowKey({ ...row, ...p })] = p.checked;
-        api
-          .setPackingCheck(row.waybill.trim(), row.inbound.trim(), row.name.trim(), p.checked)
-          .catch(() => {
-            // 写失败下次重勾一次就行
-          });
-        // 手机端服务在跑就顺手告诉它，省得整表 sync 覆盖手机刚勾的状态
-        // （面板收起也算在跑，不能用 mobileOpen 判断）
-        if (mobileInfo) {
-          api
-            .mobileSetCheck(row.waybill.trim(), row.inbound.trim(), row.name.trim(), p.checked)
-            .catch(() => {});
-        }
-      }
+      void saveChecks([{ ...row, ...p }]);
+      return;
     }
+    const next = rowsRef.current.map((r, j) => (j === i ? { ...r, ...p } : r));
+    rowsRef.current = next;
+    setRows(next);
     setSavedPath(null);
   };
 
@@ -1392,6 +1425,7 @@ export default function PackingPage({
 
   const mobilePayload = (): MobileRowDto[] =>
     rowsRef.current.map((r) => ({
+      sourceId: sheetGenerationRef.current,
       waybill: r.waybill,
       inbound: r.inbound,
       name: r.name,
@@ -1410,6 +1444,7 @@ export default function PackingPage({
     if (mobileInfo) return true;
     try {
       const info = await api.mobileStart(mobilePayload());
+      applyMobileSnapshot(await api.mobileRows());
       setMobileInfo(info);
       return true;
     } catch (e) {
@@ -1463,7 +1498,7 @@ export default function PackingPage({
   /** 打开「导入出货截图」弹窗（拖图 / 选图都在里面） */
   const openShipImages = () => {
     if (rows.length === 0) {
-      setError("先把表铺出来（同步 / 本地缓存 / 选择文件），再导入出货截图");
+      setError("先把表铺出来（同步 / 选择文件），再导入出货截图");
       return;
     }
     // 每次打开都是新的一批：别把上次的图和结果留在窗口里
@@ -1592,47 +1627,22 @@ export default function PackingPage({
   };
 
   /** 表结构变了（换表、改名字/数量）才推给手机；勾选由两边各自轮询 */
-  const mobileSig = rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}`).join("~");
+  const mobileSig = sheetGenerationRef.current + rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}`).join("~");
   useEffect(() => {
     if (!mobileInfo) return;
     const timer = setTimeout(() => {
-      api.mobileSync(mobilePayload()).catch(() => {});
+      api.mobileSync(mobilePayload()).then(() => api.mobileRows()).then((remote) => {
+        if (!savingChecksRef.current) applyMobileSnapshot(remote);
+      }).catch(() => {});
     }, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobileSig, mobileOpen]);
+  }, [mobileSig, mobileOpen, mobileInfo?.port]);
 
-  /** 手机勾的变化 → 桌面端落库（和本地勾选走同一个 patch） */
-  useEffect(() => {
-    if (!mobileInfo) return;
-    let cancelled = false;
-    const pull = async () => {
-      try {
-        const remote = await api.mobileRows();
-        if (cancelled) return;
-        for (const m of remote) {
-          const idx = rowsRef.current.findIndex(
-            (r) => r.waybill === m.waybill && r.inbound === m.inbound && r.name === m.name
-          );
-          if (idx >= 0 && rowsRef.current[idx].checked !== m.checked) {
-            patch(idx, { checked: m.checked });
-          }
-        }
-      } catch {
-        // 手机端断开不影响电脑端
-      }
-    };
-    pull();
-    const id = setInterval(pull, 1500);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobileOpen]);
 
   return (
     <div className="page wide packing-page">
+      {archiveError && <Alert type="error" showIcon message={archiveError} /> }
       <header className="page-head">
         <div>
           <h1 className="page-title">出货清单</h1>
@@ -1648,24 +1658,8 @@ export default function PackingPage({
             <CloudSyncOutlined />
             {syncing ? "同步中…" : "从云表格同步"}
           </button>
-          <button
-            className="btn"
-            onClick={() => void openKdocsLogin()}
-            disabled={busy || syncing}
-            title="打开 WPS 云表格登录窗口：扫码登录一次，之后同步会自动复用登录态"
-          >
-            <LoginOutlined />
-            WPS 登录
-          </button>
-          <button
-            className="btn"
-            onClick={() => void openCached()}
-            disabled={busy || syncing}
-            title="不联网：直接解析上次同步下载的 .xls 缓存（测试省得每次去云端拉）"
-          >
-            <HistoryOutlined />
-            本地缓存
-          </button>
+
+
           {cloudSheets.length > 0 && (
             <Select
               size="small"
@@ -1686,6 +1680,45 @@ export default function PackingPage({
             <MobileOutlined />
             手机出货
           </button>
+
+
+
+
+          {taskCodes.length > 0 && (
+            <button
+              className={`btn${taskOnly ? " primary" : ""}`}
+              onClick={() => setTaskOnly((v) => !v)}
+              title="只看本次任务的行"
+            >
+              只看任务 {taskCodes.length}
+            </button>
+          )}
+          {taskCodes.length > 0 && (
+            <button className="btn" onClick={clearTasks} title="清掉本次任务">
+              清任务
+            </button>
+          )}
+          <button className="btn primary" onClick={pickFile} disabled={busy}>
+            <FolderOpenOutlined />
+            {busy ? "解析中…" : "选择文件"}
+          </button>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            title="更多操作"
+            content={
+              <div style={{ width: 240, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button
+            className="btn"
+            onClick={() => void openKdocsLogin()}
+            disabled={busy || syncing}
+            title="打开 WPS 云表格登录窗口：扫码登录一次，之后同步会自动复用登录态"
+          >
+            <LoginOutlined />
+            WPS 登录
+          </button>
+
           <button className="btn" onClick={openLog} disabled={logBusy}>
             <FileTextOutlined />
             日志
@@ -1717,54 +1750,12 @@ export default function PackingPage({
             <ImportOutlined />
             导入出货图
           </button>
-          {taskCodes.length > 0 && (
-            <button
-              className={`btn${taskOnly ? " primary" : ""}`}
-              onClick={() => setTaskOnly((v) => !v)}
-              title="只看本次任务的行"
-            >
-              只看任务 {taskCodes.length}
-            </button>
-          )}
-          {taskCodes.length > 0 && (
-            <button className="btn" onClick={clearTasks} title="清掉本次任务">
-              清任务
-            </button>
-          )}
-          <button className="btn primary" onClick={pickFile} disabled={busy}>
-            <FolderOpenOutlined />
-            {busy ? "解析中…" : "选择文件"}
-          </button>
-        </div>
-      </header>
-
-      {scanHint && (
-        <div className="toast" role="status">
-          {scanHint}
-        </div>
-      )}
-
-      <div className="packing-layout">
-      <div className="packing-main">
-    <div className="stack">
-      <div className="card">
-        <div className="card-body tight" style={{ padding: "10px 12px" }}>
-          <div className="toolbar">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="搜索商品 / 客户 / 入库号 / 单号"
-              prefix={<SearchOutlined style={{ color: "#9aa3b2" }} />}
-              allowClear
-              style={{ width: 280 }}
-            />
-            <Button icon={<ReloadOutlined />} onClick={refreshLast} disabled={busy}>
-              刷新
-            </Button>
+                </div>
+                <div style={{ borderTop: "1px solid #eef0f3", paddingTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
             <Button onClick={clearAll} disabled={rows.length === 0}>
               清空
             </Button>
-            <div style={{ flex: 1 }} />
+                  <Text type="secondary" style={{ fontSize: 12 }}>自动设置</Text>
             <Checkbox
               checked={autoOpen}
               onChange={(e) => {
@@ -1791,6 +1782,46 @@ export default function PackingPage({
             >
               有更新自动换表
             </Checkbox>
+
+                </div>
+              </div>
+            }
+          >
+            <button className="btn" aria-label="更多操作"><MoreOutlined />更多</button>
+          </Popover>
+        </div>
+      </header>
+
+      {scanHint && (
+        <div className="toast" role="status">
+          {scanHint}
+        </div>
+      )}
+
+      <div className="packing-layout">
+      <div className="packing-main">
+    <div className="stack">
+      <div className="card">
+        <div className="card-body tight" style={{ padding: "10px 12px" }}>
+          <div className="toolbar">
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜索商品 / 客户 / 入库号 / 单号"
+              prefix={<SearchOutlined style={{ color: "#9aa3b2" }} />}
+              allowClear
+              style={{ width: 280 }}
+            />
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={refreshLast}
+              disabled={busy || syncing || !sheet}
+              title="重新读取当前表格：云表格重新同步，本地文件重新解析"
+            >
+              刷新
+            </Button>
+
+            <div style={{ flex: 1 }} />
             <Button
               icon={<AppstoreOutlined />}
               type={boardMode ? "primary" : "default"}
@@ -1874,7 +1905,7 @@ export default function PackingPage({
                   disabled={!r.checked && rowBlocked(r)}
                   title={
                     !r.checked && rowBlocked(r)
-                      ? "没有入库号也没有单号，不能出货"
+                      ? "入库号和单号必须都填写，才能出货"
                       : r.checked
                         ? "点一下改回未出"
                         : "点一下标记已出"
@@ -1927,16 +1958,8 @@ export default function PackingPage({
         <Alert
           type="warning"
           showIcon
-          message={
-            sheet?.engine === "paddle"
-              ? "这结果来自 PaddleOCR（离线运行）"
-              : "这结果来自 Windows 自带 OCR"
-          }
-          description={
-            sheet?.engine === "paddle"
-              ? "文字和数字基本都能读到，仍建议扫一眼标黄行（多为合并单元格的入库号）。"
-              : "没装 PaddleOCR 模型时会读丢个别格子，标黄行必须对照原图改一下。"
-          }
+          message="这结果来自 PaddleOCR（离线运行）"
+          description="仍建议核对原图和标黄行，确认商品、数量和入库号。"
         />
       )}
 
@@ -1955,11 +1978,11 @@ export default function PackingPage({
               </Text>
               {sheet?.expectedQty != null && (
                 <Text
-                  type={sheet.expectedQty === totalQty ? "success" : "warning"}
+                  type={sheet.expectedQty === sheet.totalQty ? "success" : "warning"}
                   style={{ fontSize: 12, fontWeight: 400 }}
                 >
                   表里合计 {sheet.expectedQty} 件
-                  {sheet.expectedQty === totalQty ? "（一致）" : "（不符）"}
+                  {sheet.expectedQty === sheet.totalQty ? "（一致）" : "（不符）"}
                 </Text>
               )}
               {issueCount > 0 && (
@@ -1971,6 +1994,18 @@ export default function PackingPage({
           }
           extra={
             <Space size={12}>
+              <Select
+                aria-label="按入库号状态筛选"
+                size="small"
+                style={{ width: 172 }}
+                value={inboundStatus}
+                onChange={(value) => { setInboundStatus(value); setExpandedFolds([]); }}
+                options={[
+                  { value: "all", label: `入库号：全部 ${rows.length}` },
+                  { value: "present", label: `已有 ${rows.filter((r) => r.inbound.trim()).length}` },
+                  { value: "missing", label: `待补 ${rows.filter((r) => !r.inbound.trim()).length}` },
+                ]}
+              />
               {boardMode && (
                 <Checkbox
                   checked={onlyTodo}
@@ -2038,6 +2073,7 @@ export default function PackingPage({
                 >
                   <span className="wchip-k">
                     <span className="mono">{p.waybill}</span>
+                    {rows.some((r) => r.waybill.trim() === p.key && r.issues.includes(HISTORY_ISSUE)) && <span className="packing-history-label">含存档</span>}
                     <i className="wchip-check" aria-hidden="true" />
                   </span>
                   <span className="wchip-v">{p.total} 件</span>
@@ -2055,7 +2091,7 @@ export default function PackingPage({
               <span>
                 已选 <b>{selected.length}</b> 行
               </span>
-              <button className="btn sm" onClick={markSelectedDone}>
+              <button className="btn sm" disabled={savingChecks} onClick={markSelectedDone}>
                 标记已出
               </button>
               <button className="btn sm" onClick={copySelected}>
@@ -2086,7 +2122,7 @@ export default function PackingPage({
                         className={`board-card ${col.title === "已出" ? "done" : ""}${
                           rowBlocked(r) ? " blocked" : ""
                         }`}
-                        title={rowBlocked(r) && col.title !== "已出" ? "没有入库号也没有单号，不能出货" : undefined}
+                        title={rowBlocked(r) && col.title !== "已出" ? "入库号和单号必须都填写，才能出货" : undefined}
                         onClick={() => {
                           if (col.title !== "已出" && rowBlocked(r)) return;
                           patch(r.__idx, { checked: col.title !== "已出" });
@@ -2135,7 +2171,8 @@ export default function PackingPage({
               scroll={{ x: 1100, y: "100%" }}
               rowClassName={(r) => {
                 if (isFold(r)) return "packing-fold-row";
-                if (rowBlocked(r)) return "packing-row-blocked";
+                if (r.issues.includes(HISTORY_ISSUE)) return "packing-row-history" + (!r.inbound.trim() ? " packing-row-missing-inbound" : "");
+                if (!r.inbound.trim()) return "packing-row-missing-inbound";
                 return r.issues.some((c) => PROBLEM_ISSUES.has(c)) ? "packing-row-warn" : "";
               }}
               onRow={(r) => {
@@ -2223,7 +2260,9 @@ export default function PackingPage({
         </div>
       )}
       {savedPath && <div className="banner ok">✅ 已保存：{savedPath}</div>}
-      {error && <div className="banner err">❌ {error}</div>}
+      <PackingSaveStatus saving={savingChecks} failure={checkFailure} error={error}
+        onRetry={() => { if (checkFailure) void saveChecks(checkFailure.changes, true, checkFailure.sourceId); }}
+        onDiscard={discardFailure} />
 
       {statsOpen && (
         <StatsModal

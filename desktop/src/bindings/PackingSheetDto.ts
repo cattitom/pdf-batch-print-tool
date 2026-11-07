@@ -7,6 +7,6 @@ export type PackingSheetDto = { items: Array<PackingItemDto>, destination: strin
  */
 mapping: string, warnings: Array<string>, 
 /**
- * 截图识别用的引擎："paddle" / "system"；粘贴和 xlsx 路径为空
+ * 截图识别用的引擎：仅 "paddle"；粘贴和 xlsx 路径为空
  */
 engine: string, };

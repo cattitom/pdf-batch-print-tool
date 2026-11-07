@@ -13,7 +13,7 @@ use crate::error::ImposeError;
 use crate::crop::{auto_crop_rect, crop_rect, pdfium, CropSpec};
 use crate::{numbers, sep};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -167,8 +167,8 @@ pub fn impose_to<W: Write>(
         }
 
         // 第一页的裁剪矩形（决定分隔页尺寸 + 各页裁剪）
-        let first_dict = page_dictionary(&src, page_ids[0])?;
-        let first_size = page_display_size(first_dict);
+        let first_dict = resolved_page(&src, page_ids[0])?;
+        let first_size = source_geometry(&first_dict).0;
         let crop_rect_first: Option<(f64, f64, f64, f64)> = match &input.crop {
             Some(CropSpec::Auto { margin_mm }) => {
                 auto_crop_rect(&bytes, *margin_mm, 96.0)?
@@ -273,6 +273,50 @@ fn page_dictionary<'a>(doc: &'a Document, page_id: ObjectId) -> ImposeResult<&'a
     }
 }
 
+// Materialize inheritable page attributes before detaching from the source tree.
+fn resolved_page(src: &Document, id: ObjectId) -> ImposeResult<Dictionary> {
+    let mut page = page_dictionary(src, id)?.clone();
+    let mut current = id;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return Err(ImposeError::pdf("页面父节点存在循环引用"));
+        }
+        let node = page_dictionary(src, current)?;
+        for key in [b"MediaBox".as_slice(), b"CropBox", b"Resources", b"Rotate"] {
+            if page.get(key).is_err() {
+                if let Ok(value) = node.get(key) { page.set(key.to_vec(), value.clone()); }
+            }
+        }
+        match node.get(b"Parent") {
+            Ok(Object::Reference(parent)) => current = *parent,
+            Ok(_) => return Err(ImposeError::pdf("页面父节点不是间接引用")),
+            Err(_) => break,
+        }
+    }
+    for key in [b"MediaBox".as_slice(), b"CropBox", b"Rotate"] {
+        if let Ok(value) = page.get(key).cloned() {
+            let (_, resolved) = src.dereference(&value)?;
+            page.set(key.to_vec(), resolved.clone());
+        }
+    }
+    page.remove(b"Parent");
+    Ok(page)
+}
+
+// Transform original PDF coordinates to the visible, unrotated-origin display space.
+fn source_geometry(page: &Dictionary) -> ((f64, f64), [f64; 6]) {
+    let (x0, y0, x1, y1) = dict_box(page, b"CropBox").unwrap_or_else(|| mediabox_of(page));
+    let (w, h) = ((x1-x0).abs(), (y1-y0).abs());
+    let rot = page.get(b"Rotate").and_then(Object::as_i64).unwrap_or(0).rem_euclid(360);
+    match rot {
+        90 => ((h,w), [0.,-1.,1.,0.,-y0,w+x0]),
+        180 => ((w,h), [-1.,0.,0.,-1.,w+x0,h+y0]),
+        270 => ((h,w), [0.,1.,-1.,0.,h+y0,-x0]),
+        _ => ((w,h), [1.,0.,0.,1.,-x0,-y0]),
+    }
+}
+
 fn dict_box(dict: &Dictionary, key: &[u8]) -> Option<(f64, f64, f64, f64)> {
     match dict.get(key).ok()? {
         Object::Array(items) => {
@@ -296,12 +340,6 @@ fn dict_box(dict: &Dictionary, key: &[u8]) -> Option<(f64, f64, f64, f64)> {
 
 fn mediabox_of(dict: &Dictionary) -> (f64, f64, f64, f64) {
     dict_box(dict, b"MediaBox").unwrap_or((0.0, 0.0, 612.0, 792.0))
-}
-
-/// 页面原始尺寸（未裁剪、未旋转）。
-fn page_display_size(dict: &Dictionary) -> (f64, f64) {
-    let (x0, y0, x1, y1) = mediabox_of(dict);
-    ((x1 - x0).abs(), (y1 - y0).abs())
 }
 
 /// 应用裁剪矩形与旋转后的显示尺寸（分隔页尺寸要用它）。
@@ -371,9 +409,10 @@ fn copy_object(
         .get_object(id)
         .map_err(|_| ImposeError::pdf(format!("结构损坏：引用了不存在的对象 {} {}", id.0, id.1)))?
         .clone();
-    let copied = copy_value(dst, src, &obj, map)?;
-    let nid = dst.add_object(copied);
+    let nid = dst.add_object(Object::Null);
     map.insert(id, nid);
+    let copied = copy_value(dst, src, &obj, map)?;
+    dst.objects.insert(nid, copied);
     Ok(nid)
 }
 
@@ -406,15 +445,9 @@ fn add_content_page(
     input: &FileInput,
     crop_rect_first: Option<(f64, f64, f64, f64)>,
 ) -> ImposeResult<(ObjectId, f64, f64)> {
-    let dict_obj = src.get_object(page_id)?.clone();
-    let mut pd = match dict_obj {
-        Object::Dictionary(d) => d,
-        _ => return Err(ImposeError::pdf("页面不是字典对象")),
-    };
-    pd.remove(b"Parent");
+    let mut pd = resolved_page(src, page_id)?;
+    let (original, source_matrix) = source_geometry(&pd);
     pd.remove(b"Rotate");
-
-    let original = page_display_size(&pd);
     // 本页裁剪矩形：以第一页检测/设定的矩形为准（同一文件各页尺寸一致）
     let crop = crop_rect_first;
     // 内容空间尺寸（裁剪后）
@@ -434,11 +467,22 @@ fn add_content_page(
         270 => (0.0, 1.0, -1.0, 0.0, ch + y0, -x0),
         _ => (1.0, 0.0, 0.0, 1.0, -x0, -y0),
     };
+    // Compose source rotation/origin with the crop and user rotation transform.
+    let [sa, sb, sc, sd, se, sf] = source_matrix;
+    let (a,b,c,d,e,f) = (
+        a*sa+c*sb, b*sa+d*sb, a*sc+c*sd, b*sc+d*sd,
+        a*se+c*sf+e, b*se+d*sf+f,
+    );
     let identity = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 && e == 0.0 && f == 0.0;
 
     // 深拷贝页面字典及可达对象
+    let new_page_id = dst.add_object(Object::Null);
+    // Back-references (e.g. annotation /P) must not recursively import the page tree.
+    let previous = map.insert(page_id, new_page_id);
     let obj = copy_value(dst, src, &Object::Dictionary(pd), map)?;
-    let new_page_id = dst.add_object(obj);
+    dst.objects.insert(new_page_id, obj);
+    if let Some(previous) = previous { map.insert(page_id, previous); }
+
 
     // 变换微型流先加入 dst（避免与 get_object_mut 的可变借用冲突）
     let scale_streams = if !identity {
@@ -455,7 +499,7 @@ fn add_content_page(
 
     // 在 dst 的页面上做后处理
     if let Object::Dictionary(pd2) = dst.get_object_mut(new_page_id)? {
-        // 页面框：有裁剪设为裁剪后尺寸（原点归零）；纯旋转设为显示尺寸；否则沿用原页
+        // Source origins and rotations are baked into content; normalize page boxes.
         let set_box = |pd2: &mut lopdf::Dictionary, w: f64, h: f64| {
             let arr = || {
                 Object::Array(vec![
@@ -468,11 +512,8 @@ fn add_content_page(
             pd2.set("MediaBox", arr());
             pd2.set("CropBox", arr());
         };
-        // 页面框：有裁剪或旋转时都设为显示尺寸（dw/dh 已含裁剪与 90/270 的宽高互换）；
-        // 否则沿用原页框。之前 crop+rotate 会漏掉宽高互换，导致旋转后被裁切。
-        if crop.is_some() || rot != 0 {
-            set_box(pd2, dw, dh);
-        }
+        // Both boxes follow the final visible size.
+        set_box(pd2, dw, dh);
         // 变换：前后插微型流
         if let Some((s1, s2)) = scale_streams {
             let old_contents: Vec<Object> = match pd2.get(b"Contents") {
@@ -844,5 +885,111 @@ mod tests {
         );
     }
 
+
+    fn inherited_fixture(rotation: i64) -> Vec<u8> {
+        let mut doc = Document::load_mem(&fixture("PROBE-A4.pdf")).unwrap();
+        let pid = doc.page_iter().next().unwrap();
+        let parent = doc.get_object(pid).unwrap().as_dict().unwrap()
+            .get(b"Parent").unwrap().as_reference().unwrap();
+        for key in [b"MediaBox".as_slice(), b"Resources", b"CropBox"] {
+            let value = doc.get_object_mut(pid).unwrap().as_dict_mut().unwrap().remove(key);
+            if let Some(value) = value {
+                doc.get_object_mut(parent).unwrap().as_dict_mut().unwrap().set(key.to_vec(), value);
+            }
+        }
+        doc.get_object_mut(parent).unwrap().as_dict_mut().unwrap().set("Rotate", rotation);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn inherited_resources_and_rotations_preserve_rendering() {
+        use pdfium_render::prelude::*;
+        for rotation in [0, 90, 180, 270] {
+            let bytes = inherited_fixture(rotation);
+            let input = FileInput::from_bytes("inherited", bytes.clone());
+            let out = impose(&[input], &ImposeOptions::default(), &|_,_| {}).unwrap();
+            let render = |data: &[u8]| {
+                let doc = pdfium().load_pdf_from_byte_slice(data, None).unwrap();
+                let image = doc.pages().get(0).unwrap()
+                    .render_with_config(&PdfRenderConfig::new().set_target_width(400)).unwrap()
+                    .as_image().unwrap().to_rgb8();
+                image
+            };
+            let before = render(&bytes);
+            let after = render(&out);
+            assert_eq!(before.dimensions(), after.dimensions(), "rotation {rotation}");
+            let mean_error = before.as_raw().iter().zip(after.as_raw())
+                .map(|(a,b)| (*a as f64-*b as f64).abs()).sum::<f64>() / before.as_raw().len() as f64;
+            assert!(mean_error < 1.0, "rotation {rotation}: pixel error {mean_error}");
+        }
+    }
+
+    #[test]
+    fn inherited_rotation_combines_with_user_rotation_and_crop() {
+        for original in [0, 90, 180, 270] {
+            for extra in [0, 90, 180, 270] {
+                let bytes = inherited_fixture(original);
+                let src = Document::load_mem(&bytes).unwrap();
+                let pid = src.page_iter().next().unwrap();
+                let visible = source_geometry(&resolved_page(&src, pid).unwrap()).0;
+                let mut input = FileInput::from_bytes("rotated", bytes);
+                input.rotate = extra;
+                input.crop = Some(CropSpec::Rect { x0: 10., y0: 20., x1: visible.0-30., y1: visible.1-40. });
+                let out = impose(&[input], &ImposeOptions::default(), &|_,_| {}).unwrap();
+                let info = pdf_info(&out).unwrap();
+                let expected = display_size((visible.0-40., visible.1-60.), None, extra);
+                assert!((info.width_mm*MM_TO_PT-expected.0).abs()<0.1);
+                assert!((info.height_mm*MM_TO_PT-expected.1).abs()<0.1);
+            }
+        }
+    }
+
+    #[test]
+    fn copying_cyclic_objects_preserves_back_references() {
+        let mut src = Document::with_version("1.4");
+        let a = src.add_object(Object::Null);
+        let b = src.add_object(Object::Array(vec![Object::Reference(a)]));
+        src.objects.insert(a, Object::Array(vec![Object::Reference(b)]));
+        let mut dst = new_document();
+        let mut map = HashMap::new();
+        let copied = copy_object(&mut dst, &src, a, &mut map).unwrap();
+        assert_eq!(map.len(), 2);
+        let next = dst.get_object(copied).unwrap().as_array().unwrap()[0].as_reference().unwrap();
+        let back = dst.get_object(next).unwrap().as_array().unwrap()[0].as_reference().unwrap();
+        assert_eq!(back, copied);
+    }
+
+    #[test]
+    fn cyclic_page_parent_returns_error() {
+        let mut doc = Document::load_mem(&fixture("PROBE-A4.pdf")).unwrap();
+        let pid = doc.page_iter().next().unwrap();
+        doc.get_object_mut(pid).unwrap().as_dict_mut().unwrap().set("Parent", Object::Reference(pid));
+        assert!(resolved_page(&doc, pid).unwrap_err().to_string().contains("循环"));
+    }
+
+    #[test]
+    fn annotation_page_back_reference_does_not_import_source_tree() {
+        let mut doc = Document::load_mem(&fixture("PROBE-A4.pdf")).unwrap();
+        let pid = doc.page_iter().next().unwrap();
+        let mut annot = Dictionary::new();
+        annot.set("Type", Object::Name(b"Annot".to_vec()));
+        annot.set("Subtype", Object::Name(b"Text".to_vec()));
+        annot.set("P", Object::Reference(pid));
+        let aid = doc.add_object(annot);
+        doc.get_object_mut(pid).unwrap().as_dict_mut().unwrap()
+            .set("Annots", vec![Object::Reference(aid)]);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let out = impose(&[FileInput::from_bytes("annotation", bytes)], &ImposeOptions::default(), &|_,_| {}).unwrap();
+        let result = Document::load_mem(&out).unwrap();
+        let page = result.page_iter().next().unwrap();
+        let annotation = result.get_object(page).unwrap().as_dict().unwrap()
+            .get(b"Annots").unwrap().as_array().unwrap()[0].as_reference().unwrap();
+        assert_eq!(result.get_object(annotation).unwrap().as_dict().unwrap()
+            .get(b"P").unwrap().as_reference().unwrap(), page);
+        assert_eq!(result.page_iter().count(), 1);
+    }
 
 }

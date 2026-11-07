@@ -2,7 +2,7 @@
 //!
 //! 设计取舍：
 //! - 只做「读当前表 + 改已录」，解析/OCR 仍在桌面端，手机端不重写业务。
-//! - 数据只在内存里，桌面端关闭即失效；勾选由桌面端轮询后落库（沿用 set_packing_check）。
+//! - 勾选事务提交数据库后再返回成功；数据集和记录版本阻止旧请求覆盖。
 //! - token 放在 URL 查询参数里，二维码直接带 token，局域网内不裸奔。
 
 use std::{
@@ -37,7 +37,16 @@ const JS: &str = include_str!("../mobile/m.js");
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct MobileRow {
+    #[serde(default)]
+    pub source_id: String,
+    #[serde(default)]
+    pub record_id: String,
+    #[serde(default)]
+    pub dataset_id: String,
+    #[serde(default)]
+    pub version: u64,
     pub waybill: String,
     pub inbound: String,
     pub name: String,
@@ -84,12 +93,19 @@ struct Inner {
 
 pub struct Shared {
     inner: Mutex<Inner>,
+    db: Arc<Mutex<pdfimpose_core::Db>>,
 }
 
 pub type MobileShared = Arc<Shared>;
 
+#[cfg(test)]
 pub fn new_shared() -> MobileShared {
+    with_db(Arc::new(Mutex::new(pdfimpose_core::Db::open_in_memory().expect("测试数据库"))))
+}
+
+pub fn with_db(db: Arc<Mutex<pdfimpose_core::Db>>) -> MobileShared {
     Arc::new(Shared {
+        db,
         inner: Mutex::new(Inner {
             info: None,
             rows: Vec::new(),
@@ -107,12 +123,10 @@ fn now_secs() -> u64 {
 }
 
 /// 生成一个新口令（也用于首次启动时写进本机设置）。
-pub fn new_token() -> String {
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{:08x}", ((t as u64) ^ ((std::process::id() as u64) << 32)) as u32)
+pub fn new_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("生成手机配对口令失败：{e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// 从网卡列表里挑出手机能访问的地址：跳过 VPN / 虚拟网卡和 169.254，私有网段优先。
@@ -219,8 +233,13 @@ fn bind_server(prefer: Option<u16>) -> Result<(Server, u16), String> {
     Ok((server, port))
 }
 
-/// UDP 发现应答：手机 App 一启动就广播暗号，这里回 {port, token}，
-/// 手机就不用扫码/填地址了。socket 绑定失败（端口被占）只是少一个便利，不影响 HTTP 服务。
+/// 发现协议只公布地址，访问凭证只通过电脑上的二维码或已保存链接取得。
+fn discovery_payload(info: &MobileInfo) -> serde_json::Value {
+    json!({ "app": "pdf-mobile", "name": display_name(), "port": info.port,
+        "urls": info.urls.iter().map(|url| url.split('?').next().unwrap_or(url)).collect::<Vec<_>>() })
+}
+
+/// UDP 发现仅返回地址；端口被占不影响 HTTP 和扫码配对。
 fn start_discovery(shared: &MobileShared, stop: Arc<AtomicBool>) {
     let sock = match UdpSocket::bind(("0.0.0.0", DISCOVER_PORT)) {
         Ok(s) => s,
@@ -247,21 +266,14 @@ fn start_discovery(shared: &MobileShared, stop: Arc<AtomicBool>) {
             // 口令/端口每次现取：重开服务换了端口也能立刻回报
             let info = shared.inner.lock().ok().and_then(|i| i.info.clone());
             if let Some(info) = info {
-                let payload = json!({
-                    "app": "pdf-mobile",
-                    "name": display_name(),
-                    "port": info.port,
-                    "token": info.token,
-                    "urls": info.urls,
-                })
-                .to_string();
+                let payload = discovery_payload(&info).to_string();
                 let _ = sock.send_to(payload.as_bytes(), from);
             }
         }
     });
 }
 
-/// 把手机服务的地址 + token 广播到 mDNS，手机 App 用 Bonjour 就能零配置找到。
+/// 仅广播手机服务地址和电脑名称，首次连接必须扫描电脑上的二维码。
 /// 每次开服务都重新注册（换 Wi-Fi 后 IP 会变），旧的先注销。
 fn start_mdns(info: &MobileInfo) {
     let ip = info
@@ -272,7 +284,6 @@ fn start_mdns(info: &MobileInfo) {
         .unwrap_or("127.0.0.1")
         .to_string();
     let host = mdns_host_name();
-    let token = info.token.clone();
     let display = display_name();
 
     let daemon = match mdns_sd::ServiceDaemon::new() {
@@ -288,7 +299,7 @@ fn start_mdns(info: &MobileInfo) {
         &host,
         ip.as_str(),
         info.port,
-        &[("token", token.as_str()), ("name", display.as_str())][..],
+        &[("name", display.as_str())][..],
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -360,11 +371,12 @@ fn qr_svg(url: &str) -> String {
 
 pub fn start(
     shared: &MobileShared,
-    rows: Vec<MobileRow>,
+    mut rows: Vec<MobileRow>,
     token: String,
     prefer_port: Option<u16>,
 ) -> Result<MobileInfo, String> {
     let mut inner = shared.inner.lock().map_err(|e| e.to_string())?;
+    prepare_rows(&mut rows, &inner.rows);
     if let Some(old) = inner.info.clone() {
         inner.rows = rows;
         // 换过 Wi-Fi / 开了 VPN 之后地址会变，重开弹窗时重新挑一次
@@ -396,8 +408,72 @@ pub fn start(
         }
     });
 
-    log::info!("手机出货服务已启动：{}", info.url);
+    log::info!("手机出货服务已启动，端口 {}", info.port);
     Ok(info)
+}
+
+fn record_id(waybill: &str, inbound: &str, name: &str) -> String {
+    serde_json::to_string(&(waybill.trim(), inbound.trim(), name.trim())).expect("字符串序列化")
+}
+
+fn prepare_rows(rows: &mut [MobileRow], old: &[MobileRow]) {
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let same = rows.len() == old.len() && rows.iter().zip(old).all(|(a,b)|
+        record_id(&a.waybill,&a.inbound,&a.name) == record_id(&b.waybill,&b.inbound,&b.name)
+        && a.qty == b.qty && a.blocked == b.blocked && a.source_id == b.source_id);
+    let dataset = if same && !old.is_empty() { old[0].dataset_id.clone() } else {
+        format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos(),
+            GENERATION.fetch_add(1, Ordering::Relaxed))
+    };
+    for row in rows {
+        row.record_id = record_id(&row.waybill,&row.inbound,&row.name);
+        row.dataset_id = dataset.clone();
+        row.version = 0;
+        if let Some(previous) = old.iter().find(|r| r.record_id == row.record_id) {
+            row.checked = previous.checked;
+            if same { row.version = previous.version; }
+        }
+    }
+}
+
+/// 全部调用按“手机状态锁 → 数据库锁”排序，提交成功后才修改内存。
+/// expected 来自客户端看到的版本；服务运行时缺失版本也拒绝写入。
+pub fn commit_checks(
+    shared: &MobileShared,
+    changes: &[(String, String, String, bool)],
+    expected: Option<&[MobileRow]>,
+) -> Result<(), (u16, String)> {
+    let mut inner = shared.inner.lock().map_err(|_| (500,"手机状态锁异常".into()))?;
+    let mut indices = Vec::new();
+    for (waybill,inbound,name,checked) in changes {
+        if *checked && (waybill.trim().is_empty() || inbound.trim().is_empty()) {
+            return Err((400,"入库号和单号必须都填写，才能出货".into()));
+        }
+        let id = record_id(waybill,inbound,name);
+        let index = inner.rows.iter().position(|r| record_id(&r.waybill,&r.inbound,&r.name) == id);
+        if inner.info.is_some() {
+            let row = index.map(|i| &inner.rows[i]).ok_or((409,"表格已改变，请刷新后重试".to_string()))?;
+            let expected = expected.and_then(|v| v.iter().find(|r| r.record_id == id))
+                .ok_or((409,"缺少记录版本，请刷新后重试".to_string()))?;
+            if expected.dataset_id != row.dataset_id || expected.version != row.version {
+                return Err((409,"记录已被其他设备修改或表格已更新，请刷新核对后重试".into()));
+            }
+            if *checked && row.blocked { return Err((400,"该行不能出货".into())); }
+        }
+        indices.push(index);
+    }
+    shared.db.lock().map_err(|_| (500,"数据库锁异常".into()))?
+        .set_packing_checks(changes).map_err(|e| (500,format!("出货保存失败：{e}")))?;
+    for (index, (_,_,_,checked)) in indices.into_iter().zip(changes) {
+        if let Some(index) = index {
+            let id = inner.rows[index].record_id.clone();
+            for row in inner.rows.iter_mut().filter(|r| r.record_id == id) {
+                row.checked = *checked;
+                row.version += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn sync(shared: &MobileShared, mut rows: Vec<MobileRow>) {
@@ -405,23 +481,9 @@ pub fn sync(shared: &MobileShared, mut rows: Vec<MobileRow>) {
         if inner.info.is_none() {
             return;
         }
-        // 勾选以手机端为准：电脑勾变更走 set_check，这里只换结构（换表、改名字/数量）
-        for row in rows.iter_mut() {
-            if let Some(old) = inner.rows.iter().find(|o| {
-                o.waybill == row.waybill && o.inbound == row.inbound && o.name == row.name
-            }) {
-                row.checked = old.checked;
-            }
-            // 认领状态由 inner.claims 现填，下发前不在这里存
-            row.claimed_by = inner.claims.get(&row.waybill).cloned().unwrap_or_default();
-        }
+        prepare_rows(&mut rows, &inner.rows);
         inner.rows = rows;
     }
-}
-
-/// 电脑端勾选后同步给手机（避免整表 sync 覆盖手机刚勾的状态）。
-pub fn set_check(shared: &MobileShared, waybill: &str, inbound: &str, name: &str, checked: bool) {
-    toggle(shared, waybill, inbound, name, checked);
 }
 
 pub fn rows(shared: &MobileShared) -> Vec<MobileRow> {
@@ -571,16 +633,16 @@ fn handle(mut req: Request, shared: &MobileShared) {
                     return;
                 }
             };
-            let waybill = v["waybill"].as_str().unwrap_or("").to_string();
-            let inbound = v["inbound"].as_str().unwrap_or("").to_string();
-            let name = v["name"].as_str().unwrap_or("").to_string();
-            let checked = v["checked"].as_bool().unwrap_or(false);
-            let ok = toggle(shared, &waybill, &inbound, &name, checked);
-            if ok {
-                respond(req, json!({"ok": true}).to_string(), "application/json; charset=utf-8", 200)
-            } else {
-                respond(req, json!({"error": "没找到这一行"}).to_string(), "application/json; charset=utf-8", 404)
+            let row: MobileRow = match serde_json::from_value(v) {
+                Ok(row) => row,
+                Err(_) => { respond(req, json!({"error":"请求字段不完整，请刷新页面"}).to_string(), "application/json", 400); return; }
+            };
+            let changes = vec![(row.waybill.trim().into(), row.inbound.trim().into(), row.name.trim().into(), row.checked)];
+            match commit_checks(shared, &changes, Some(&[row])) {
+                Ok(()) => respond(req, json!({"ok":true}).to_string(), "application/json; charset=utf-8", 200),
+                Err((status, message)) => respond(req, json!({"error":message}).to_string(), "application/json; charset=utf-8", status),
             }
+
         }
         (Method::Post, "/api/claim") => {
             let mut body = String::new();
@@ -660,6 +722,7 @@ fn claim(shared: &MobileShared, waybill: &str, who: &str) -> Option<String> {
     Some(who)
 }
 
+#[cfg(test)]
 fn toggle(shared: &MobileShared, waybill: &str, inbound: &str, name: &str, checked: bool) -> bool {
     let Ok(mut inner) = shared.inner.lock() else {
         return false;
@@ -667,8 +730,8 @@ fn toggle(shared: &MobileShared, waybill: &str, inbound: &str, name: &str, check
     let mut hit = false;
     for row in inner.rows.iter_mut() {
         if row.waybill == waybill && row.inbound == inbound && row.name == name {
-            // 没入库号也没单号的货不能出货：手机点上去也不认
-            if checked && row.blocked {
+            // 缺任一号码均不能出货。
+            if checked && (row.blocked || row.waybill.trim().is_empty() || row.inbound.trim().is_empty()) {
                 return false;
             }
             row.checked = checked;
@@ -737,6 +800,7 @@ mod tests {
 
 
                 claimed_by: String::new(),
+            source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
             }];
         }
         assert!(toggle(&shared, "S1", "I1", "货", true));
@@ -772,6 +836,7 @@ mod tests {
                 task_id: String::new(),
 
                 claimed_by: String::new(),
+            source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
             }];
         }
         assert!(!toggle(&shared, "", "", "没有箱唛", true));
@@ -837,6 +902,7 @@ mod tests {
 
 
             claimed_by: String::new(),
+            source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
         }];
         let info = start(&shared, seed, "testtoken".into(), None).expect("start server");
         let host = format!("127.0.0.1:{}", info.port);
@@ -851,6 +917,8 @@ mod tests {
         );
         assert!(sheet.contains("测试货"));
         assert!(sheet.contains("\"rows\""));
+        let unpaired = http(&host, "GET /api/sheet HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        assert!(unpaired.contains("403"));
 
         let denied = http(&host, "GET /api/sheet?t=bad HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
         assert!(denied.contains("403"));
@@ -867,7 +935,9 @@ mod tests {
         );
         assert!(via_cookie.contains("测试货"));
 
-        let body = r#"{"waybill":"S1","inbound":"I1","name":"测试货","checked":true}"#;
+        let mut operation = rows(&shared)[0].clone();
+        operation.checked = true;
+        let body = serde_json::to_string(&operation).unwrap();
         let post = format!(
             "POST /api/check?t={} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             info.token,
@@ -877,6 +947,13 @@ mod tests {
         let res = http(&host, &post);
         assert!(res.contains("200 OK"));
         assert!(rows(&shared)[0].checked);
+        assert!(shared.db.lock().unwrap().all_packing_checks().unwrap()[0].3);
+        let stale = http(&host, &post);
+        assert!(stale.contains("409"));
+        shared.inner.lock().unwrap().info.as_mut().unwrap().token = "rotated-token".into();
+        let old_cookie = http(&host, "GET /api/sheet HTTP/1.1\r\nHost: x\r\nCookie: mt=testtoken\r\nConnection: close\r\n\r\n");
+        assert!(old_cookie.contains("403"));
+
 
         stop(&shared);
         // 停掉后端口应该很快释放
@@ -906,7 +983,129 @@ mod tests {
     fn shows_real_ips() {
         println!("lan_ips = {:?}", lan_ips());
     }
+    fn commit_fixture() -> MobileShared {
+        let shared = new_shared();
+        let mut inner = shared.inner.lock().unwrap();
+        let mut seed = vec![MobileRow {
+            waybill: "W".into(), inbound: "I".into(), name: "货品".into(),
+            source_id: "source-a".into(), ..Default::default()
+        }];
+        prepare_rows(&mut seed, &[]);
+        inner.rows = seed;
+        inner.info = Some(build_info(17650, "test".into()));
+        drop(inner);
+        shared
+    }
+
+    #[test]
+    fn commits_before_returning_and_rejects_stale_versions() {
+        let shared = commit_fixture();
+        let snapshot = rows(&shared);
+        let change = vec![("W".into(), "I".into(), "货品".into(), true)];
+        commit_checks(&shared, &change, Some(&snapshot)).unwrap();
+        assert!(shared.db.lock().unwrap().all_packing_checks().unwrap()[0].3);
+        assert!(rows(&shared)[0].checked);
+        assert_eq!(rows(&shared)[0].version, 1);
+        let stale = vec![("W".into(), "I".into(), "货品".into(), false)];
+        assert_eq!(commit_checks(&shared, &stale, Some(&snapshot)).unwrap_err().0, 409);
+        assert!(rows(&shared)[0].checked);
+        let mut changed = rows(&shared);
+        changed[0].source_id = "source-b".into();
+        sync(&shared, changed);
+        assert_eq!(commit_checks(&shared, &stale, Some(&snapshot)).unwrap_err().0, 409);
+    }
+
+    #[test]
+    fn concurrent_devices_only_one_matching_version_can_commit() {
+        let shared = commit_fixture();
+        let snapshot = rows(&shared);
+        let handles: Vec<_> = (0..2).map(|_| {
+            let shared = shared.clone();
+            let snapshot = snapshot.clone();
+            std::thread::spawn(move || commit_checks(&shared,
+                &[("W".into(), "I".into(), "货品".into(), true)], Some(&snapshot)))
+        }).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|r| matches!(r, Err((409,_)))).count(), 1);
+    }
+
+    #[test]
+    fn failed_database_write_preserves_memory_and_version() {
+        let shared = commit_fixture();
+        let path = test_database_path("failure");
+        *shared.db.lock().unwrap() = pdfimpose_core::Db::open(&path).unwrap();
+        let connection = pdfimpose_core::rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("CREATE TRIGGER reject_save BEFORE INSERT ON packing_checks
+            BEGIN SELECT RAISE(ABORT, '模拟磁盘保存失败'); END;").unwrap();
+        let snapshot = rows(&shared);
+        assert_eq!(commit_checks(&shared, &[("W".into(), "I".into(), "货品".into(), true)], Some(&snapshot)).unwrap_err().0, 500);
+        assert!(!rows(&shared)[0].checked);
+        assert_eq!(rows(&shared)[0].version, 0);
+        assert!(shared.db.lock().unwrap().all_packing_checks().unwrap().is_empty());
+        drop(connection);
+        drop(shared);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn test_database_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("mobile-{label}-{}-{}.db", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
+    }
+
+    #[test]
+    fn mobile_commit_survives_shutdown_without_desktop_poll() {
+        let path = test_database_path("restart");
+        {
+            let shared = commit_fixture();
+            *shared.db.lock().unwrap() = pdfimpose_core::Db::open(&path).unwrap();
+            let snapshot = rows(&shared);
+            commit_checks(&shared, &[("W".into(), "I".into(), "货品".into(), true)], Some(&snapshot)).unwrap();
+        }
+        {
+            let db = pdfimpose_core::Db::open(&path).unwrap();
+            assert!(db.all_packing_checks().unwrap()[0].3);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+
+    #[test]
+    fn discovery_payload_contains_no_pairing_credentials() {
+        let info = build_info(17650, "secret-pairing-token".into());
+        let payload = discovery_payload(&info);
+        assert!(payload.get("token").is_none());
+        assert!(!payload.to_string().contains("secret-pairing-token"));
+        for url in payload["urls"].as_array().unwrap() {
+            assert!(!url.as_str().unwrap().contains('?'));
+        }
+    }
+
+    #[test]
+    fn pairing_tokens_are_long_random_values() {
+        let first = new_token().unwrap();
+        let second = new_token().unwrap();
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
 }
 
 
 
+
+#[cfg(test)]
+mod required_shipping_ids_tests {
+    use super::*;
+    #[test]
+    fn shipping_requires_both_numbers_but_allows_undo() {
+        let shared = new_shared();
+        for (waybill, inbound) in [("", "I1"), ("W1", ""), (" ", "I1"), ("", "")] {
+            let result = commit_checks(&shared, &[(waybill.into(), inbound.into(), "商品".into(), true)], None);
+            assert_eq!(result.unwrap_err().0, 400);
+        }
+        assert!(commit_checks(&shared, &[("W1".into(), "I1".into(), "商品".into(), true)], None).is_ok());
+        assert!(commit_checks(&shared, &[("".into(), "".into(), "商品".into(), false)], None).is_ok());
+    }
+}

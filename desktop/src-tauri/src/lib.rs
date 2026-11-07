@@ -24,8 +24,9 @@ pub fn run() {
                 log_file.display()
             );
             let state = commands::init_state(app)?;
+            let mobile_state = mobile::with_db(state.db.clone());
             app.manage(state);
-            app.manage(mobile::new_shared());
+            app.manage(mobile_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +47,7 @@ pub fn run() {
             commands::all_settings,
             commands::set_setting,
             commands::set_packing_check,
+            commands::set_packing_checks,
             commands::list_packing_checks,
             commands::clear_packing_checks,
             commands::log_dir,
@@ -54,6 +56,7 @@ pub fn run() {
             commands::parse_packing_image,
             commands::parse_packing_xls,
             commands::kdocs::sync_kdocs_packing,
+            commands::kdocs::snapshot_kdocs_cache,
             commands::kdocs::open_kdocs_login,
             commands::save_text_file,
             commands::read_log_tail,
