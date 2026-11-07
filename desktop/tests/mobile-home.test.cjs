@@ -23,8 +23,8 @@ function setup(){
 test('启动直接显示工作台，不连接电脑',()=>{
  const h=setup();assert.equal(h.calls.length,0);assert.equal(h.element('home').classList.contains('hide'),false);assert.equal(h.element('gate').classList.contains('hide'),true);
 });
-test('未连接也能打开本地清单与设置并返回',()=>{
- const h=setup();h.element('module-local').listeners.click();assert.equal(h.element('view').src,'./shipping/index.html');
+test('未连接也能从统一入口打开清单与设置并返回',()=>{
+ const h=setup();h.element('module-warehouse').listeners.click();assert.equal(h.element('view').src,'./shipping/index.html');
  h.element('home-back').listeners.click();assert.equal(h.element('home').classList.contains('hide'),false);
  h.element('module-settings').listeners.click();assert.equal(h.element('settings').classList.contains('hide'),false);assert.equal(h.calls.length,0);
 });

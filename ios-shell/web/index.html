@@ -260,6 +260,26 @@
   button.ghost { background: #e9efec; color: #375c50; }
   .switch-row { background: #eaf0ed; }
   .icon-bad { background: #faece9; }
+  /* 显示时播放动画；不延迟导航，快速返回也不会留下遮罩。 */
+  @keyframes module-enter {
+    from { opacity: 0; transform: translateX(22px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes home-return {
+    from { opacity: .4; transform: translateX(-14px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  #home { animation: home-return 240ms ease-out; }
+  body.module-open #view, body.module-open #gate, #settings, #local {
+    animation: module-enter 280ms cubic-bezier(.22, .68, .3, 1);
+  }
+  .module-card { transition: transform 160ms ease, box-shadow 160ms ease; }
+  .module-card:active { transform: scale(.98); }
+  @media (prefers-reduced-motion: reduce) {
+    #home, body.module-open #view, body.module-open #gate, #settings, #local { animation: none; }
+    .module-card { transition: none; }
+    .module-card:active { transform: none; }
+  }
 </style>
 </head>
 <body>
@@ -270,10 +290,7 @@
 <div class="home-heading">我的工作<span>按需连接 · 随时查看</span></div>
 <button id="module-warehouse" class="module-card featured">
 <span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3 8 9-5 9 5v11l-9 3-9-3V8Z"/><path d="m3 8 9 4 9-4M12 12v10M7 5.8l10 4.4"/></svg></span>
-<span class="module-copy"><strong>入库与出货</strong><small>查看实时清单，协同处理仓库业务</small></span><span class="module-arrow">›</span></button>
-<button id="module-local" class="module-card">
-<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h4"/></svg></span>
-<span class="module-copy"><strong>本地清单</strong><small>上次同步的记录，离线也可查看</small></span><span class="module-arrow">›</span></button>
+<span class="module-copy"><strong>入库与出货</strong><small>联网同步清单，离线也能查看和记录</small></span><span class="module-arrow">›</span></button>
 <button id="module-settings" class="module-card">
 <span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5M8 9h8"/></svg></span>
 <span class="module-copy"><strong>设备与连接</strong><small>管理电脑配对与连接记录</small></span><span class="module-arrow">›</span></button>
@@ -722,7 +739,7 @@
   }
 
   // 本地清单与实时清单使用同一份 App 内置页面和数据层。
-  function openLocal() { enterModule('本地清单'); openShipping(); }
+  function openLocal() { enterModule(); openShipping(); }
 
   function mk(tag, cls, text) {
     var n = document.createElement(tag);
@@ -916,7 +933,6 @@
   }
   homeBack.addEventListener('click', showHome);
   document.getElementById('module-warehouse').addEventListener('click', function () { enterModule(); openShipping(); });
-  document.getElementById('module-local').addEventListener('click', function () { enterModule('本地清单'); openShipping(); });
   document.getElementById('module-settings').addEventListener('click', function () { enterModule('设备与连接'); openSettings(); });
   showHome();
 })();
