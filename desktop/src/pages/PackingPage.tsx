@@ -169,6 +169,8 @@ const KEY_PICKED = "packing_picked_waybills";
 const KEY_PINNED = "packing_pinned";
 /** 本地手改过的单号（JSON：`入库号|商品名` → 单号）。原表没写单号的行，改完能记住，不写回原表。 */
 const KEY_WAYBILL_PATCH = "packing_waybill_patch";
+const KEY_SPECIAL = "packing_special_shipments";
+const SPECIAL_AMAZON = "special_amazon";
 /** 本次要出货的货：从截图里认出来的入库号（JSON 数组）。手机端按它只显示这批。 */
 const KEY_TASKS = "packing_task_inbounds";
 /** 任务号：按单号分组的 `[{ id: "T1", waybill, rows, boxes }]`，手机端按它认领。 */
@@ -228,7 +230,7 @@ function parseWaybillPatch(raw?: string): Record<string, string> {
 }
 
 /** 既没入库号也没单号：客户还没给箱唛，货还不能发——灰着、不让标已出，但照常算未出/进手机/进导出。 */
-const rowBlocked = (r: PackingItemDto) => !r.inbound.trim() || !r.waybill.trim();
+const rowBlocked = (r: PackingItemDto) => !r.issues.includes(SPECIAL_AMAZON) && (!r.inbound.trim() || !r.waybill.trim());
 
 /** 一行货物的稳定指纹：同一票、同入库号、同商品名，重新解析后还能认回来。 */
 
@@ -293,6 +295,8 @@ export default function PackingPage({
   const externalFileRef = useRef(false);
   /** 本地手改的单号（`入库号|商品名` → 单号），解析完铺表时套上去。 */
   const waybillPatchRef = useRef<Record<string, string>>({});
+  const specialRef = useRef<Record<string, string>>({});
+  const [savingSpecial, setSavingSpecial] = useState(false);
   /** 手机出货的轮询里要读最新 rows，避免闭包拿到旧表 */
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -778,10 +782,18 @@ export default function PackingPage({
     {
       title: "备注",
       key: "issues",
-      width: 118,
+      width: 175,
       render: (_: unknown, r: TableRow) => {
         if (isFold(r)) return null;
         const shown = r.issues.filter((c) => SHOWN_ISSUES.has(c));
+        const special = r.issues.includes(SPECIAL_AMAZON);
+        if (special || rowBlocked(r)) return (
+          <Tooltip title={special ? "特殊出货，备注：亚马逊；无需单号和入库号。未出货时可点击取消。" : "将这一行标记为亚马逊特殊出货，允许免单号和入库号"}>
+            <Button size="small" type="text" style={special ? { color: "#a65c00", background: "#fff4e5" } : undefined} disabled={savingSpecial || (r.checked && special)} onClick={() => void setAmazon(r.__idx, !special)}>
+              {special ? "亚马逊 · 免单号" : "标记亚马逊免单号"}
+            </Button>
+          </Tooltip>
+        );
         if (shown.length === 0) return <span className="cell-dash">—</span>;
         const text = ISSUE_TEXT[shown[0]] ?? shown[0];
         const isNote = shown.every((c) => NOTE_ISSUES.has(c));
@@ -820,7 +832,7 @@ export default function PackingPage({
             <Input
               variant="borderless"
               value={v}
-              placeholder="待补入库号"
+              placeholder={r.issues.includes(SPECIAL_AMAZON) ? "免单号 · 亚马逊" : "待补入库号"}
               aria-label="入库号"
               style={monoStyle}
               onChange={(e) => patch(r.__idx, { inbound: e.target.value })}
@@ -908,7 +920,8 @@ export default function PackingPage({
     const liveItems = s.items.map((it) => {
       // 原表没写单号的行，这里先套上本地手改的那一个（测试 / 客户事后补单号都用得上）
       const local = waybillPatchRef.current[waybillPatchKey(it)];
-      const row = local ? { ...it, waybill: local } : it;
+      let row = local ? { ...it, waybill: local } : it;
+      if (specialRef.current[rowKey(row)] === "亚马逊") row = { ...row, issues: [...row.issues.filter((c) => c !== SPECIAL_AMAZON), SPECIAL_AMAZON] };
       if (row.checked) return row;
       // 单号被本地改过时，两种指纹都认：改号之前点过的「已出」不该丢
       const saved =
@@ -989,6 +1002,7 @@ export default function PackingPage({
       }
       if (!alive) return;
       waybillPatchRef.current = parseWaybillPatch(s[KEY_WAYBILL_PATCH]);
+      specialRef.current = parseWaybillPatch(s[KEY_SPECIAL]);
       setTaskCodes(parseCodeList(s[KEY_TASKS]));
       setShipTasks(parseTasks(s[KEY_TASK_META]));
       setAutoSync(s[KEY_KDOCS_AUTO_SYNC] === "1");
@@ -1129,6 +1143,7 @@ export default function PackingPage({
       } catch {
         // 读不到设置就按默认（自动打开）
       }
+      specialRef.current = parseWaybillPatch(saved[KEY_SPECIAL]);
       const on = saved[KEY_AUTO_OPEN] !== "0";
       setAutoOpen(on);
 
@@ -1215,6 +1230,29 @@ export default function PackingPage({
     rowsRef.current = next;
     setRows(next);
     setSavedPath(null);
+  };
+
+  const setAmazon = async (i: number, enabled: boolean) => {
+    const row = rowsRef.current[i];
+    if (!row || savingSpecial || (row.checked && !enabled)) return;
+    const source = sheetGenerationRef.current;
+    const key = rowKey(row);
+    const next = { ...specialRef.current };
+    if (enabled) next[key] = "亚马逊";
+    else delete next[key];
+    setSavingSpecial(true);
+    try {
+      await api.setSetting(KEY_SPECIAL, JSON.stringify(next));
+      specialRef.current = next;
+      if (source === sheetGenerationRef.current) {
+        const updated = rowsRef.current.map((r) => rowKey(r) === key ? {
+          ...r, issues: [...r.issues.filter((c) => c !== SPECIAL_AMAZON), ...(enabled ? [SPECIAL_AMAZON] : [])],
+        } : r);
+        rowsRef.current = updated;
+        setRows(updated);
+      }
+    } catch (e) { setError("特殊出货标记保存失败：" + errorText(e)); }
+    finally { setSavingSpecial(false); }
   };
 
   /** 改单号：同时记进数据库（`入库号|商品名` → 单号），重新解析 / 重启还能认回来。
@@ -1460,7 +1498,7 @@ export default function PackingPage({
   };
 
   /** 表结构变了（换表、改名字/数量）才推给手机；勾选由两边各自轮询 */
-  const mobileSig = sheetGenerationRef.current + rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}`).join("~");
+  const mobileSig = sheetGenerationRef.current + rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}|${r.issues.includes(SPECIAL_AMAZON)}`).join("~");
   useEffect(() => {
     if (!mobileInfo) return;
     const timer = setTimeout(() => {

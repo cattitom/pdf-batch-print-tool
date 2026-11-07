@@ -321,6 +321,8 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
     $tickets.innerHTML = list.map(ticketHtml).join("");
   }
 
+  function isAmazon(r) { return (r.issues || []).indexOf("special_amazon") !== -1; }
+
   function lineHtml(r) {
     return (
       '<article class="row' +
@@ -345,8 +347,9 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
       esc(r.name) +
       "</div>" +
       '<span class="mono inb">' +
-      esc(r.inbound || "无入库号") +
+      esc(r.inbound || (isAmazon(r) ? "免单号" : "无入库号")) +
       "</span>" +
+      (isAmazon(r) ? '<span class="tag">亚马逊 · 免单号</span>' : "") +
       (r.task ? '<span class="tag task">任务</span>' : "") +
       (hasProblem(r) ? '<span class="tag">待确认</span>' : "") +
       "</div>" +
@@ -524,7 +527,7 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
       }
     }
     if (!r || saving[k]) return;
-    if (!r.checked && (!String(r.waybill || "").trim() || !String(r.inbound || "").trim())) { toast("入库号和单号必须都填写，才能出货"); return; }
+    if (!r.checked && !isAmazon(r) && (!String(r.waybill || "").trim() || !String(r.inbound || "").trim())) { toast("入库号和单号必须都填写，才能出货"); return; }
     var next = !r.checked;
     r.checked = next;
     saving[k] = true;
@@ -552,7 +555,7 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
   function receive() {
     var list = docRows();
     var pending = list.filter(function (r) {
-      return !r.checked && !r.blocked && String(r.waybill || "").trim() && String(r.inbound || "").trim(); // 没入库号/单号的跳过，勾不动
+      return !r.checked && !r.blocked && (isAmazon(r) || (String(r.waybill || "").trim() && String(r.inbound || "").trim())); // 没入库号/单号的跳过，勾不动
     });
     if (pending.length && !confirm("还有 " + pending.length + " 行没勾，确认全部标记为已出？")) {
       return;
@@ -703,4 +706,5 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
 
   if (transport) { applyRows(transport.cached()); setSync("本地清单 · 正在检查连接"); }
   load(true);
+  if (window.parent !== window) window.parent.postMessage({source:'shipping-mobile', type:'ui-ready'}, '*');
 })();

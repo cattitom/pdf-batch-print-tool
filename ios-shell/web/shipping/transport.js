@@ -79,7 +79,7 @@
   }
   function check(row, checked) {
     return serialize(async function () {
-      if (checked && (!String(row.waybill || '').trim() || !String(row.inbound || '').trim())) throw new Error('入库号和单号必须都填写，才能出货');
+      if (checked && (row.issues || []).indexOf("special_amazon") === -1 && (!String(row.waybill || '').trim() || !String(row.inbound || '').trim())) throw new Error('入库号和单号必须都填写，才能出货');
       var cache = cacheForConnection();
       var op = { waybill:row.waybill, inbound:row.inbound, name:row.name, checked:checked, sourceId:row.sourceId, recordId:row.recordId, datasetId:row.datasetId, version:row.version, computer:connectionUrl() || (cache && cache.url) };
       try {

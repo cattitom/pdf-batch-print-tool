@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
-const html=fs.readFileSync(path.join(__dirname,'../../ios-shell/web/index.html'),'utf8');
+const html=fs.readFileSync(path.join(__dirname,'../../ios-shell/web/app.html'),'utf8');
 const fn=html.slice(html.indexOf('  function connectPeer('),html.indexOf('  function connectUrl('));
 function setup(history=[]) {
   const connected=[];const rejected=[];

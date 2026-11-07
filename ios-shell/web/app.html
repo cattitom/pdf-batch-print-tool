@@ -1,0 +1,986 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>出货助手</title>
+<style>
+  :root {
+    --bg: #0f1519;
+    --card: #172027;
+    --text: #e6edf2;
+    --dim: #8fa3b0;
+    --accent: #35c48a;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    overflow: hidden;
+  }
+  #view {
+    position: fixed; inset: 0; width: 100%; height: 100%; border: 0;
+    background: #fff; display: none;
+  }
+  #gate {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-start; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: max(20px, env(safe-area-inset-top)) 24px max(20px, env(safe-area-inset-bottom));
+    text-align: center;
+  }
+  .panel {
+    width: 100%; max-width: 340px; margin: auto 0;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  .spin {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.14); border-top-color: var(--accent);
+    animation: turn .9s linear infinite;
+  }
+  @keyframes turn { to { transform: rotate(360deg); } }
+  .title { font-size: 17px; font-weight: 600; letter-spacing: .3px; }
+  .sub { color: var(--dim); font-size: 13px; max-width: 300px; overflow-wrap: anywhere; }
+  .icon-ok, .icon-bad {
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700;
+  }
+  .icon-ok { background: rgba(53,196,138,.16); color: var(--accent); }
+  .icon-bad { background: rgba(255,107,107,.14); color: var(--danger); }
+  button {
+    appearance: none; border: 0; border-radius: 12px;
+    background: var(--accent); color: #06231a;
+    font-size: 15px; font-weight: 600; padding: 12px 26px;
+    width: 100%;
+  }
+  button:active { opacity: .8; }
+  button.ghost {
+    background: rgba(255,255,255,.10); color: var(--text); font-weight: 500;
+  }
+  .switch-row {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(255,255,255,.06); color: var(--dim); font-size: 13px;
+    text-align: left;
+  }
+  .switch-row input {
+    appearance: none; -webkit-appearance: none; flex: none;
+    width: 44px; height: 26px; border-radius: 13px; margin: 0;
+    background: rgba(255,255,255,.18); position: relative; transition: background .2s;
+  }
+  .switch-row input:checked { background: var(--accent); }
+  .switch-row input::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 20px; height: 20px; border-radius: 50%; background: #fff;
+    transition: transform .2s;
+  }
+  .switch-row input:checked::after { transform: translateX(18px); }
+  #err {
+    width: 100%; max-height: 76px; overflow-y: auto; text-align: left;
+    font-size: 13px; line-height: 1.6; color: var(--dim);
+    background: rgba(255,255,255,.04); border-radius: 8px; padding: 8px 10px;
+    overflow-wrap: anywhere;
+  }
+  .list-head {
+    width: 100%; display: flex; align-items: baseline; justify-content: space-between;
+    margin-top: 6px; color: var(--dim); font-size: 12px;
+  }
+  .list-head button {
+    width: auto; padding: 0; background: none; color: var(--dim);
+    font-size: 12px; font-weight: 400; text-decoration: underline;
+  }
+  #history { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .hist {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    background: var(--card); color: var(--text); text-align: left;
+    padding: 10px 12px; border-radius: 10px; font-weight: 400;
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  .hist-name { font-size: 14px; font-weight: 600; }
+  .hist-meta { font-size: 12px; color: var(--dim); }
+  #auto-note {
+    width: 100%; font-size: 12px; color: var(--dim);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap;
+  }
+  #auto-note button {
+    width: auto; padding: 0; background: none; color: var(--accent);
+    font-size: 12px; font-weight: 500; text-decoration: underline;
+  }
+  details {
+    width: 100%; text-align: left; color: var(--dim); font-size: 13px;
+    background: rgba(255,255,255,.04); border-radius: 10px; padding: 8px 12px;
+  }
+  summary { cursor: pointer; }
+  #manual { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  #manual input {
+    width: 100%; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06);
+    color: var(--text); font-size: 16px; text-align: center;
+  }
+  #manual input:focus { outline: none; border-color: var(--accent); }
+  #manual button { background: rgba(255,255,255,.14); color: var(--text); }
+  .hint { color: var(--dim); font-size: 13px; line-height: 1.7; }
+  /* 扫码层：windowed 模式下相机在 webview 下面，页面必须透明才能看见画面 */
+  html.scan-mode, body.scan-mode { background: transparent !important; }
+  #scanning {
+    width: 100%; display: flex; flex-direction: column; align-items: center;
+    gap: 26px; padding-top: 8vh;
+  }
+  .scan-tip { position: relative; z-index: 1; font-size: 15px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  .scan-frame {
+    width: 220px; height: 220px; border-radius: 18px;
+    border: 2px solid rgba(255,255,255,.9);
+    box-shadow: 0 0 0 100vmax rgba(0,0,0,.45);
+  }
+  #scan-cancel { max-width: 200px; position: relative; z-index: 1; }
+  .hide { display: none !important; }
+
+  /* 右下角悬浮设置入口：连上电脑后才出现，不占网页布局 */
+  #fab {
+    position: fixed; z-index: 50; right: 14px;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    background: rgba(255,255,255,.96); color: #5b646e;
+    border: 1px solid #e3e7ec; box-shadow: 0 6px 18px rgba(16,24,40,.14);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #fab:active { background: #eef1f4; }
+  #fab svg { width: 19px; height: 19px; }
+
+  /* 设置页：盖在网页上的浅色全屏页，跟网页同一套观感 */
+  #settings {
+    position: fixed; inset: 0; z-index: 60; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #f1f3f5; color: #111418;
+    font: 15px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    padding: max(6px, env(safe-area-inset-top)) 0 28px;
+  }
+  .s-head { display: flex; align-items: center; padding: 8px 16px 12px; }
+  .s-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .s-done {
+    margin-left: auto; width: auto; padding: 6px 0 6px 12px;
+    background: none; color: #5b6470; font-size: 14px; font-weight: 500;
+  }
+  .s-group {
+    margin: 0 12px 14px; background: #fff; border: 1px solid #e3e7ec;
+    border-radius: 12px; overflow: hidden;
+  }
+  .s-big { padding: 14px 14px 13px; border-bottom: 1px solid #eef1f4; }
+  .s-k { font-size: 11.5px; color: #5b6470; }
+  .s-now { font-size: 15px; font-weight: 600; margin-top: 3px; }
+  .s-addr { font-size: 12px; color: #68717c; margin-top: 2px; }
+  .s-act { display: flex; gap: 8px; margin-top: 11px; }
+  .s-pill {
+    width: auto; border-radius: 9px; padding: 8px 13px; font-size: 13px; font-weight: 500;
+    background: #111418; color: #fff;
+  }
+  .s-pill.ghost { background: #eef1f4; color: #111418; }
+  .s-pill:disabled { opacity: .45; }
+  .s-row {
+    display: flex; align-items: center; gap: 10px; padding: 13px 14px; font-size: 14px;
+  }
+  .s-row + .s-row { border-top: 1px solid #eef1f4; }
+  .s-row .k { color: #111418; }
+  .s-row .v { margin-left: auto; color: #68717c; font-size: 13px; max-width: 190px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .s-row .k.danger { color: #b32d2d; }
+  .s-row-tap:active { background: #f5f7f9; }
+  .s-switch {
+    margin-left: auto; width: 44px; height: 26px; padding: 0; border-radius: 13px;
+    background: #d5dae0; position: relative; border: 0;
+  }
+  .s-switch::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; transition: transform .18s;
+  }
+  .s-switch.on { background: #2f9e6f; }
+  .s-switch.on::after { transform: translateX(18px); }
+  .s-foot { text-align: center; font-size: 11.5px; color: #5b6470; padding: 4px 0 0; }
+
+  /* 离线清单：电脑连不上时的本地快照，勾选存本地，连上再回传 */
+  #local {
+    position: fixed; inset: 0; z-index: 70; overflow-y: auto;
+    -webkit-overflow-scrolling: touch; background: #f1f3f5; color: #111418;
+    font: 15px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    padding: max(6px, env(safe-area-inset-top)) 0 calc(24px + env(safe-area-inset-bottom));
+  }
+  .l-head { display: flex; align-items: center; padding: 8px 16px 4px; }
+  .l-head h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  .l-head .x { margin-left: auto; width: auto; padding: 6px 0 6px 12px; background: none; color: #5b6470; font-size: 14px; font-weight: 500; }
+  .l-note { padding: 2px 16px 8px; font-size: 11.5px; color: #5b6470; }
+  .l-note b { color: #8a5210; }
+  /* 别用 flex：innerHTML 里的文本节点会各自成项，字号一粗一细就错位 */
+  .l-stats { display: block; padding: 0 16px 10px; font-size: 12px; color: #5b6470; }
+  .l-stats b { font-size: 19px; font-weight: 600; color: #111418; }
+  .l-ticket { margin: 0 12px 10px; background: #fff; border: 1px solid #e3e7ec; border-radius: 14px; overflow: hidden; }
+  .l-ticket .t { display: flex; align-items: center; gap: 8px; padding: 11px 13px 7px; font-size: 14px; font-weight: 600; }
+  .l-ticket .t .tag { margin-left: auto; font-size: 11px; font-weight: 400; padding: 2px 8px; border-radius: 999px; background: #fdf0dc; color: #8a5210; }
+  .l-line { display: flex; gap: 9px; align-items: flex-start; padding: 9px 13px; border-top: 1px solid #eef1f4; font-size: 13px; }
+  .l-line.on { color: #9aa3ad; }
+  .l-line.on .n { text-decoration: line-through; }
+  .l-box {
+    flex: none; width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid #c3c9d1;
+    margin-top: 1px; display: grid; place-items: center; font-size: 13px; color: #fff;
+  }
+  .l-line.on .l-box { background: #2f9e6f; border-color: #2f9e6f; }
+  .l-line .n { flex: 1; min-width: 0; }
+  .l-line .m { display: block; font-size: 11.5px; color: #68717c; margin-top: 2px; }
+  /* 手机工作台：浅色界面和独立导航区，内容不与返回按钮重叠。 */
+  :root { --bg: #f5f7f8; --card: #fff; --text: #20312e; --dim: #788581; --accent: #287c67; --danger: #bd5049; --shell-nav: calc(48px + env(safe-area-inset-top, 0px)); }
+  #home { position: fixed; inset: 0; overflow-y: auto; padding: calc(24px + env(safe-area-inset-top)) 22px calc(28px + env(safe-area-inset-bottom)); background: radial-gradient(ellipse at 90% 0, #e0eee7 0, transparent 50%), var(--bg); }
+  .home-wrap { max-width: 480px; margin: auto; }
+  .home-eyebrow { color: #658078; font-size: 11px; letter-spacing: 2px; font-weight: 600; }
+  #home h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -1px; margin: 13px 0 10px; }
+  #home p { color: var(--dim); margin: 0; font-size: 13px; line-height: 1.8; }
+  .home-heading { margin: 36px 0 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+  .home-heading span { font-size: 11px; color: var(--dim); font-weight: 400; }
+  .module-card { position: relative; text-align: left; display: flex; align-items: center; gap: 15px; width: 100%; padding: 19px 17px; margin-bottom: 12px; color: var(--text); background: #fff; border: 1px solid #e4eae7; border-radius: 18px; box-shadow: 0 3px 12px #243f3004; }
+  .module-icon { display: grid; place-items: center; flex: none; width: 44px; height: 44px; background: #eef3f1; color: #4a7064; border-radius: 14px; }
+  .module-icon svg { width: 23px; height: 23px; }
+  .module-copy { flex: 1; min-width: 0; }
+  .module-card strong { display: block; font-size: 16px; margin-bottom: 5px; font-weight: 600; }
+  .module-card small { display: block; color: #7b8782; font-size: 12px; font-weight: 400; line-height: 1.6; }
+  .module-arrow { color: #8d9c94; font-size: 24px; font-weight: 300; }
+  .module-card.featured { background: #226d59; color: #fff; padding: 25px 18px; border: 0; box-shadow: 0 8px 20px #226d591b; }
+  .module-card.featured small { color: #c5dfd4; }
+  .featured .module-icon { background: #ffffff19; color: #e0f1e8; }
+  .featured .module-arrow { color: #c5dfd4; }
+  .home-note { padding: 17px 5px; text-align: center; font-size: 11px; color: #87958f; }
+  #shell-nav { display: none; position: fixed; inset: 0 0 auto; height: var(--shell-nav); padding: env(safe-area-inset-top) 12px 0; align-items: center; justify-content: space-between; z-index: 90; background: #f9fbfa; border-bottom: 1px solid #e2e8e5; }
+  body.module-open #shell-nav { display: flex; }
+  #home-back { position: static; width: 82px; height: 44px; padding: 0; border: 0; border-radius: 0; color: #287c67; background: transparent; text-align: left; font-size: 14px; font-weight: 500; }
+  #shell-title { font-size: 14px; font-weight: 600; }
+  #shell-settings { width: 82px; height: 44px; padding: 0; text-align: right; background: transparent; color: #527267; font-size: 13px; font-weight: 500; }
+  body.module-open #view { top: var(--shell-nav); bottom: 0; height: calc(100% - var(--shell-nav)); }
+  body.module-open #gate, body.module-open #settings, body.module-open #local { top: var(--shell-nav); padding-top: 22px; }
+  #fab { display: none !important; }
+  .s-group { background: #fff; border: 1px solid #e4eae7; }
+  button.ghost { background: #e9efec; color: #375c50; }
+  .switch-row { background: #eaf0ed; }
+  .icon-bad { background: #faece9; }
+  /* 显示时播放动画；不延迟导航，快速返回也不会留下遮罩。 */
+  @keyframes module-enter {
+    from { opacity: 0; transform: translateX(22px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes home-return {
+    from { opacity: .4; transform: translateX(-14px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  #home { animation: home-return 240ms ease-out; }
+  body.module-open #view, body.module-open #gate, #settings, #local {
+    animation: module-enter 280ms cubic-bezier(.22, .68, .3, 1);
+  }
+  .module-card { transition: transform 160ms ease, box-shadow 160ms ease; }
+  .module-card:active { transform: scale(.98); }
+  @media (prefers-reduced-motion: reduce) {
+    #home, body.module-open #view, body.module-open #gate, #settings, #local { animation: none; }
+    .module-card { transition: none; }
+    .module-card:active { transform: none; }
+  }
+</style>
+</head>
+<body>
+<section id="home"><div class="home-wrap">
+<div class="home-eyebrow">仓 库 随 行</div>
+<h1>今天的工作，从这里开始</h1>
+<p>连接仓库，处理每一票出货。<br>电脑不在身边，也能查看手机里的清单。</p>
+<div class="home-heading">我的工作<span>按需连接 · 随时查看</span></div>
+<button id="module-warehouse" class="module-card featured">
+<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3 8 9-5 9 5v11l-9 3-9-3V8Z"/><path d="m3 8 9 4 9-4M12 12v10M7 5.8l10 4.4"/></svg></span>
+<span class="module-copy"><strong>入库与出货</strong><small>联网同步清单，离线也能查看和记录</small></span><span class="module-arrow">›</span></button>
+<button id="module-settings" class="module-card">
+<span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5M8 9h8"/></svg></span>
+<span class="module-copy"><strong>设备与连接</strong><small>管理电脑配对与连接记录</small></span><span class="module-arrow">›</span></button>
+<div class="home-note">实时业务需与电脑处于同一 Wi-Fi</div>
+</div></section>
+<nav id="shell-nav" aria-label="模块导航"><button id="home-back" class="hide">‹ 工作台</button><span id="shell-title">入库与出货</span><button id="shell-settings">设置</button></nav>
+<iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
+
+<button id="fab" class="hide" aria-label="设置">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <circle cx="12" cy="12" r="3.2" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </svg>
+</button>
+
+<section id="settings" class="hide"></section>
+<section id="local" class="hide"></section>
+
+<div id="gate" class="hide">
+  <div class="panel">
+    <!-- 查找中 -->
+    <div id="status">
+      <div class="spin" style="margin:0 auto 12px"></div>
+      <div class="title">正在找电脑…</div>
+      <div class="sub">手机和电脑要在同一个 WiFi 下</div>
+    </div>
+
+    <!-- 找到了：问要不要连、要不要记住 -->
+    <div id="found" class="hide" style="display:flex;flex-direction:column;align-items:center;gap:12px;width:100%">
+      <div class="icon-ok">✓</div>
+      <div class="title">发现电脑</div>
+      <div class="sub" id="found-sub"></div>
+      <label class="switch-row">
+        <span>下次直接连接，不再询问</span>
+        <input type="checkbox" id="remember" />
+      </label>
+      <button id="connect">连接</button>
+      <button id="research" class="ghost">重新搜索</button>
+    </div>
+
+    <!-- 没找到：扫码 / 历史 / 手填 -->
+    <div id="notfound" class="hide" style="display:flex;flex-direction:column;align-items:center;gap:12px;width:100%">
+      <div class="icon-bad">!</div>
+      <div class="title">没找到电脑</div>
+      <div id="err" class="hide"></div>
+      <button id="scan">扫二维码连接</button>
+      <button id="retry" class="ghost">重试</button>
+      <div id="history-wrap" class="hide" style="width:100%">
+        <div class="list-head"><span>最近连过</span><button id="clear">清空</button></div>
+        <div id="history"></div>
+      </div>
+      <div id="auto-note" class="hide"></div>
+      <details id="manual-wrap" style="width:100%">
+        <summary>手动填电脑 IP</summary>
+        <div id="manual">
+          <input id="ip" type="text" inputmode="decimal" autocomplete="off" placeholder="电脑 IP，如 192.168.6.125" />
+          <button id="useip">用这个地址找</button>
+        </div>
+      </details>
+      <div class="hint">
+        还找不到？<br />① 电脑上的「手机出货」面板开着没<br />② 电脑防火墙放行了没（面板里有按钮）
+      </div>
+    </div>
+
+    <!-- 扫码中 -->
+    <div id="scanning" class="hide">
+      <div class="scan-tip">对准电脑上的二维码</div>
+      <div class="scan-frame"></div>
+      <button id="scan-cancel" class="ghost">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var view = document.getElementById('view');
+  var gate = document.getElementById('gate');
+  var fab = document.getElementById('fab');
+  var settings = document.getElementById('settings');
+  var current = null; // 当前连着的电脑 { host, name, url }
+  var el = {
+    status: document.getElementById('status'),
+    found: document.getElementById('found'),
+    notfound: document.getElementById('notfound'),
+    scanning: document.getElementById('scanning'),
+    foundSub: document.getElementById('found-sub'),
+    remember: document.getElementById('remember'),
+    err: document.getElementById('err'),
+    historyWrap: document.getElementById('history-wrap'),
+    history: document.getElementById('history'),
+    autoNote: document.getElementById('auto-note'),
+    ip: document.getElementById('ip')
+  };
+
+  var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+
+  var HISTORY_KEY = 'shipping-shell.history';
+  var AUTO_KEY = 'shipping-shell.auto';
+  var LEGACY_HOST = 'shipping-shell.host';
+  var MAX_HISTORY = 5;
+
+  var moduleActive = false;
+  var navigationId = 0;
+  var home = document.getElementById("home");
+  var homeBack = document.getElementById("home-back");
+  var lastPeer = null;   // 当前「发现」到的电脑
+
+  function readJSON(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function writeJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+  }
+  function loadHistory() {
+    var list = readJSON(HISTORY_KEY, []);
+    return Array.isArray(list) ? list : [];
+  }
+  function loadAuto() { return readJSON(AUTO_KEY, null); }
+  function saveAuto(entry) { writeJSON(AUTO_KEY, entry); }
+  function clearAuto() { try { localStorage.removeItem(AUTO_KEY); } catch (e) {} }
+
+  function pushHistory(entry) {
+    var list = loadHistory().filter(function (x) { return x.host !== entry.host; });
+    list.unshift({
+      host: entry.host,
+      name: entry.name || '',
+      url: entry.url || '',
+      last: Date.now()
+    });
+    writeJSON(HISTORY_KEY, list.slice(0, MAX_HISTORY));
+  }
+
+  function label(item) {
+    return (item && item.name) ? item.name : '电脑';
+  }
+  function timeText(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    var d = new Date(ts);
+    var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    if (diff < 60 * 1000) return '刚刚';
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + ' 分钟前';
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    if (d >= today) return '今天 ' + hm;
+    if (d >= new Date(today.getTime() - 86400000)) return '昨天 ' + hm;
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
+  }
+
+  function setState(name) {
+    el.status.classList.toggle('hide', name !== 'search');
+    el.found.classList.toggle('hide', name !== 'found');
+    el.notfound.classList.toggle('hide', name !== 'notfound');
+    el.scanning.classList.toggle('hide', name !== 'scanning');
+    fab.classList.add('hide');
+    settings.classList.add('hide');
+    gate.classList.remove('hide');
+  }
+
+  var openTimer = 0;
+
+  // 清单始终加载手机本地资源，电脑地址只用来请求 JSON。
+  function leaveTo(url) {
+    clearTimeout(openTimer);
+    writeJSON('shipping-shell.current', { url: url });
+    view.onload = function () { if (moduleActive) gate.classList.add('hide'); };
+    if (window.shippingUpdates) window.shippingUpdates.loadFrame(view);
+    else view.src = './shipping/index.html';
+    view.style.display = 'block';
+    gate.classList.add('hide');
+    if (window.shippingUpdates) void window.shippingUpdates.check(url);
+  }
+
+  function searching() {
+    lastPeer = null;
+    view.onload = null;
+    view.style.display = 'none';
+    view.removeAttribute('srcdoc');
+    view.removeAttribute('src');
+    setState('search');
+  }
+
+  function showFound(peer) {
+    lastPeer = peer;
+    setState('found');
+    el.foundSub.textContent = (peer.name || '电脑') + ' · ' + peer.host + ' · 首次连接需扫码配对';
+    var auto = loadAuto();
+    el.remember.checked = !!(auto && auto.host === peer.host);
+  }
+
+  function renderHistory() {
+    var list = loadHistory();
+    el.history.innerHTML = '';
+    if (!list.length) {
+      el.historyWrap.classList.add('hide');
+      return;
+    }
+    el.historyWrap.classList.remove('hide');
+    list.forEach(function (item) {
+      var b = document.createElement('button');
+      b.className = 'hist';
+      var n = document.createElement('span');
+      n.className = 'hist-name';
+      n.textContent = label(item);
+      var m = document.createElement('span');
+      m.className = 'hist-meta';
+      m.textContent = item.host + (item.last ? ' · ' + timeText(item.last) : '');
+      b.appendChild(n);
+      b.appendChild(m);
+      b.addEventListener('click', function () { connectHistory(item); });
+      el.history.appendChild(b);
+    });
+  }
+
+  function renderAutoNote() {
+    var auto = loadAuto();
+    if (!auto || !auto.host) {
+      el.autoNote.classList.add('hide');
+      el.autoNote.innerHTML = '';
+      return;
+    }
+    el.autoNote.classList.remove('hide');
+    el.autoNote.innerHTML = '';
+    var span = document.createElement('span');
+    span.textContent = '下次会直接连 ' + (auto.name || auto.host);
+    var btn = document.createElement('button');
+    btn.textContent = '取消';
+    btn.addEventListener('click', function () {
+      clearAuto();
+      renderAutoNote();
+    });
+    el.autoNote.appendChild(span);
+    el.autoNote.appendChild(btn);
+  }
+
+  function showNotFound(msg) {
+    if (!moduleActive) return;
+    lastPeer = null;
+    setState('notfound');
+    var detail = msg ? String(msg) : '';
+    if (detail && detail !== '没找到电脑') {
+      el.err.classList.remove('hide');
+      el.err.textContent = detail;
+    } else {
+      el.err.classList.add('hide');
+      el.err.textContent = '';
+    }
+    if (!el.ip.value) {
+      var hist = loadHistory();
+      if (hist.length) el.ip.value = hist[0].host;
+    }
+    renderHistory();
+    renderAutoNote();
+  }
+
+  function connectPeer(peer, remember) {
+    if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
+    var origin;
+    try { origin = new URL(peer.url).origin; } catch (e) { showNotFound('电脑地址无效'); return; }
+    var saved = [loadAuto()].concat(loadHistory()).find(function (item) {
+      try {
+        var u = new URL(item && item.url);
+        return u.origin === origin && /^[a-f0-9]{64}$/i.test(u.searchParams.get('t') || '');
+      } catch (e) { return false; }
+    });
+    if (!saved) {
+      showNotFound('已发现 ' + (peer.name || peer.host) + '。首次连接请扫描电脑「手机出货」中的二维码配对。');
+      return;
+    }
+    var paired = { host: peer.host, name: peer.name || saved.name || '', url: saved.url };
+    if (remember) saveAuto(paired);
+    connectUrl(paired.url, paired);
+  }
+
+  function connectUrl(raw, meta) {
+    if (!moduleActive) return;
+    var url = String(raw || '').trim();
+    if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+    var u;
+    try { u = new URL(url); } catch (e) { showNotFound('地址看不懂：' + url); return; }
+    if (!/^[a-f0-9]{64}$/i.test(u.searchParams.get('t') || '')) {
+      showNotFound('请扫描电脑「手机出货」中的二维码配对，旧链接需要重新扫码。'); return;
+    }
+    var host = u.hostname;
+    if (!host) { showNotFound('地址里没有电脑 IP'); return; }
+    current = { host: host, name: (meta && meta.name) || '', url: u.href };
+    pushHistory(current);
+    leaveTo(u.href);
+  }
+
+  function discover() {
+    if (!invoke) {
+      showNotFound('当前不在 App 里运行（没有 Tauri 接口）');
+      return Promise.reject(new Error('no tauri'));
+    }
+    return invoke('discover_peer');
+  }
+
+  function boot() {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    var requestId = ++navigationId;
+    searching();
+    var auto = loadAuto();
+    discover().then(function (peer) {
+      if (!moduleActive || requestId !== navigationId) return;
+      if (!peer || !peer.url) { showNotFound('电脑没回地址'); return; }
+      if (auto && auto.host === peer.host) { connectPeer(peer, false); return; }
+      showFound(peer);
+    }).catch(function (e) {
+      if (!moduleActive || requestId !== navigationId) return;
+      showNotFound(String(e && e.message ? e.message : e));
+    });
+  }
+
+  function connectHistory(item) {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    searching();
+    invoke('discover_at', { host: item.host }).then(function (peer) {
+      connectPeer(peer, false);
+    }).catch(function (e) {
+      // 电脑在线但 UDP 被拦时，退回上次的整条链接（口令没换就还能用）
+      if (item.url) { connectUrl(item.url, item); return; }
+      showNotFound('连不上 ' + item.host + '：' + e);
+    });
+  }
+
+  function parseScan(text) {
+    var s = String(text || '').trim();
+    if (!s) return null;
+    if (/^https?:\/\//i.test(s)) return s;
+    // 允许二维码里只放 host:port?t=... 或 IP
+    if (/^[\w.\-]+:\d+/.test(s) || /^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return 'http://' + s;
+    return null;
+  }
+
+  function scanQr() {
+    if (!invoke) { showNotFound('当前不在 App 里运行（没有 Tauri 接口）'); return; }
+    // 先要相机权限：插件的 scan 在 iOS 14+ 不主动弹权限框，拒了会是黑屏
+    invoke('plugin:barcode-scanner|request_permissions').then(function (p) {
+      var state = p && p.camera;
+      if (state === 'denied') {
+        showNotFound('相机权限被拒：去 设置 → 出货助手 → 相机 打开后再试');
+        return;
+      }
+      startScan();
+    }).catch(function () {
+      startScan();
+    });
+  }
+
+  function startScan() {
+    // 相机画面垫在 webview 下面，页面变透明才看得见
+    document.documentElement.classList.add('scan-mode');
+    document.body.classList.add('scan-mode');
+    setState('scanning');
+    invoke('plugin:barcode-scanner|scan', {
+      windowed: true,
+      formats: ['QR_CODE'],
+      cameraDirection: 'back'
+    }).then(function (res) {
+      endScan();
+      var content = res && res.content ? String(res.content) : '';
+      var url = parseScan(content);
+      if (!url) {
+        showNotFound('扫到的不是电脑的连接地址：' + content.slice(0, 60));
+        return;
+      }
+      connectUrl(url);
+    }).catch(function (e) {
+      endScan();
+      var msg = String(e && e.message ? e.message : e);
+      if (/cancel|取消/i.test(msg)) { showNotFound(''); return; }
+      if (/denied|NS(CameraUsageDescription)/i.test(msg)) {
+        showNotFound('相机权限没开：去 设置 → 出货助手 → 相机 打开后再试');
+        return;
+      }
+      showNotFound('扫码失败：' + msg);
+    });
+  }
+
+  function endScan() {
+    document.documentElement.classList.remove('scan-mode');
+    document.body.classList.remove('scan-mode');
+  }
+
+  function connectManual() {
+    var host = String(el.ip.value || '').trim();
+    if (!host) { el.ip.focus(); return; }
+    searching();
+    invoke('discover_at', { host: host }).then(function (peer) {
+      connectPeer(peer, false);
+    }).catch(function (e) { showNotFound(String(e)); });
+  }
+
+  document.getElementById('connect').addEventListener('click', function () {
+    if (!lastPeer) return;
+    var auto = loadAuto();
+    // 明确取消勾选：把「下次自动连这台」也撤掉
+    if (!el.remember.checked && auto && auto.host === lastPeer.host) clearAuto();
+    connectPeer(lastPeer, el.remember.checked);
+  });
+  document.getElementById('research').addEventListener('click', boot);
+  document.getElementById('retry').addEventListener('click', boot);
+  document.getElementById('scan').addEventListener('click', scanQr);
+  document.getElementById('scan-cancel').addEventListener('click', function () {
+    if (!invoke) { showNotFound(''); return; }
+    // 原生层收到 cancel 会 reject 掉 scan 的 promise，统一在那里收尾
+    invoke('plugin:barcode-scanner|cancel').catch(function () {});
+  });
+  document.getElementById('clear').addEventListener('click', function () {
+    if (!loadHistory().length) return;
+    if (confirm('清空连接历史？')) {
+      try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+      renderHistory();
+    }
+  });
+  document.getElementById('useip').addEventListener('click', connectManual);
+  el.ip.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') connectManual();
+  });
+  /** 连上了想换一台：撤掉「下次直接连」，回到扫码/历史页 */
+  function backToGate() {
+    clearTimeout(openTimer);
+    clearAuto();
+    settings.classList.add('hide');
+    fab.classList.add('hide');
+    // 先摘掉 onload：撕 iframe 的 src 会触发一次 about:blank 的 load，
+    // 那个回调会把门帘再藏起来，结果就是「点了换电脑又什么都没发生」
+    view.onload = null;
+    view.style.display = 'none';
+    view.removeAttribute('srcdoc');
+    view.removeAttribute('src');
+    // 直接重扫一遍：用户点了「换电脑」就是要选另一台，别停在「没找到电脑」
+    boot();
+  }
+
+  // ---------------- 离线清单（电脑连不上时的本地快照） ----------------
+
+  var localView = document.getElementById('local');
+  var CACHE_KEY = 'shipping-shell.cache';
+  var PENDING_KEY = 'shipping-shell.pending';
+  var cache = readJSON(CACHE_KEY, null);
+  var pending = readJSON(PENDING_KEY, []);
+
+  function hm(ts) {
+    var d = new Date(ts);
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  // 本地清单与实时清单使用同一份 App 内置页面和数据层。
+  function openLocal() { enterModule(); openShipping(); }
+
+  function mk(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function closeSettings() {
+    settings.classList.add('hide');
+    if (!view.src && gate.classList.contains('hide')) showHome();
+  }
+
+  function renderSettings() {
+    settings.innerHTML = '';
+
+    var head = mk('div', 's-head');
+    head.appendChild(mk('h2', '', '设置'));
+    var done = mk('button', 's-done', '完成');
+    done.addEventListener('click', closeSettings);
+    head.appendChild(done);
+    settings.appendChild(head);
+
+    // 电脑：当前连的这台 + 换/重连
+    var group = mk('div', 's-group');
+    var big = mk('div', 's-big');
+    big.appendChild(mk('div', 's-k', '当前电脑'));
+    big.appendChild(mk('div', 's-now', current ? current.name || '电脑' : '未连接'));
+    big.appendChild(mk('div', 's-addr', current ? current.host + ' · 出货助手' : ''));
+    var act = mk('div', 's-act');
+    var swap = mk('button', 's-pill', '换一台电脑');
+    swap.addEventListener('click', backToGate);
+    var relink = mk('button', 's-pill ghost', '重连');
+    relink.addEventListener('click', function () {
+      closeSettings();
+      enterModule();
+      openShipping();
+    });
+    act.appendChild(swap);
+    act.appendChild(relink);
+    big.appendChild(act);
+    group.appendChild(big);
+
+    var auto = loadAuto();
+    var isAuto = !!(auto && current && auto.host === current.host);
+    var rowAuto = mk('div', 's-row');
+    rowAuto.appendChild(mk('span', 'k', '下次自动连这台'));
+    var sw = mk('button', 's-switch' + (isAuto ? ' on' : ''), '');
+    sw.setAttribute('aria-label', '下次自动连这台');
+    sw.addEventListener('click', function () {
+      var a = loadAuto();
+      if (a && current && a.host === current.host) clearAuto();
+      else if (current) saveAuto({ host: current.host, name: current.name || '', url: current.url });
+      renderSettings();
+    });
+    rowAuto.appendChild(sw);
+    group.appendChild(rowAuto);
+    settings.appendChild(group);
+
+    // 离线清单：手机里存的那份快照
+    if (cache && cache.rows && cache.rows.length) {
+      var gLocal = mk('div', 's-group');
+      var rLocal = mk('div', 's-row s-row-tap');
+      rLocal.appendChild(mk('span', 'k', '离线清单'));
+      rLocal.appendChild(mk('span', 'v', '截至 ' + hm(cache.at)));
+      rLocal.addEventListener('click', function () {
+        closeSettings();
+        openLocal();
+      });
+      gLocal.appendChild(rLocal);
+      if (pending.length) {
+        var rPend = mk('div', 's-row');
+        rPend.appendChild(mk('span', 'k', '待回传勾选'));
+        rPend.appendChild(mk('span', 'v', pending.length + ' 条 · 连上电脑自动推'));
+        gLocal.appendChild(rPend);
+      }
+      settings.appendChild(gLocal);
+    }
+
+    // 连接历史：点一下直接换过去
+    var hist = loadHistory();
+    if (hist.length) {
+      var gHist = mk('div', 's-group');
+      var title = mk('div', 's-row');
+      title.appendChild(mk('span', 'k', '连接历史'));
+      title.appendChild(mk('span', 'v', hist.length + ' 台'));
+      gHist.appendChild(title);
+      hist.slice(0, 4).forEach(function (item) {
+        var r = mk('div', 's-row s-row-tap');
+        r.appendChild(mk('span', 'k', item.host));
+        r.appendChild(mk('span', 'v', timeText(item.last)));
+        r.addEventListener('click', function () {
+          closeSettings();
+          searching();
+          connectHistory(item);
+        });
+        gHist.appendChild(r);
+      });
+      settings.appendChild(gHist);
+    }
+
+    // 其他
+    var gOther = mk('div', 's-group');
+    var about = mk('div', 's-row');
+    about.appendChild(mk('span', 'k', '出货助手版本'));
+    about.appendChild(mk('span', 'v', '0.1.0'));
+    gOther.appendChild(about);
+    if (hist.length) {
+      var clr = mk('div', 's-row s-row-tap');
+      clr.appendChild(mk('span', 'k danger', '清空连接记录'));
+      clr.addEventListener('click', function () {
+        if (!confirm('清空连接历史？')) return;
+        try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+        renderSettings();
+      });
+      gOther.appendChild(clr);
+    }
+    settings.appendChild(gOther);
+    if (window.shippingUpdates) {
+      var updates = mk('div', 's-group');
+      var updateRow = mk('div', 's-row');
+      updateRow.appendChild(mk('span', 'k', '页面版本'));
+      updateRow.appendChild(mk('span', 'v', window.shippingUpdates.version()));
+      updates.appendChild(updateRow);
+      var updateStatus = mk('div', 's-row');
+      updateStatus.id = 'page-update-status';
+      updateStatus.textContent = window.shippingUpdates.status();
+      updates.appendChild(updateStatus);
+      var actions = mk('div', 's-row');
+      var checkUpdate = mk('button', 's-pill', '检查页面更新');
+      checkUpdate.addEventListener('click', function () {
+        var entry = current || readJSON('shipping-shell.current', null) || loadAuto() || loadHistory().find(function (x) { return x.url; });
+        void window.shippingUpdates.check(entry && entry.url, true);
+      });
+      var applyUpdate = mk('button', 's-pill ghost', '应用更新');
+      applyUpdate.id = 'apply-page-update';
+      applyUpdate.disabled = !window.shippingUpdates.hasPending();
+      applyUpdate.addEventListener('click', function () { window.shippingUpdates.applyPending(); });
+      var restore = mk('button', 's-pill ghost', '恢复内置版');
+      restore.addEventListener('click', function () {
+        if (confirm('恢复内置页面并重新打开？配对、清单和待同步记录都会保留。')) window.shippingUpdates.restoreBuiltin();
+      });
+      actions.appendChild(checkUpdate); actions.appendChild(applyUpdate); actions.appendChild(restore); updates.appendChild(actions);
+      settings.appendChild(updates);
+    }
+    settings.appendChild(mk('div', 's-foot', '清单保存在手机，出货操作连接后同步'));
+  }
+
+  function openSettings() {
+
+    renderSettings();
+    settings.classList.remove('hide');
+  }
+
+  fab.addEventListener('click', openSettings);
+  document.getElementById('shell-settings').addEventListener('click', openSettings);
+
+  // 网页报告自己切到了单据页就收起齿轮：单据页底部整条是「确认出货」，别挡住。
+  window.addEventListener('message', function (e) {
+    if (e.source !== view.contentWindow) return;
+    var d = e && e.data;
+    if (!d || typeof d !== 'object' || d.source !== 'shipping-mobile') return;
+    if (d.type !== 'view') return;
+    if (d.view === 'doc') fab.classList.add('hide');
+    else if (view.src) fab.classList.remove('hide');
+  });
+  document.addEventListener('visibilitychange', function () {
+    // 从后台切回来、还没连上就再找一次；
+    // 扫码时切出去（相机是原生界面）不要重复触发发现，等扫码回调就行
+    if (document.hidden || view.src || !moduleActive || gate.classList.contains('hide')) return;
+    if (!el.scanning.classList.contains('hide')) return;
+    boot();
+  });
+
+  // 旧版本只记了一个 host，迁移成一条历史，别让用户重扫
+  try {
+    var legacy = localStorage.getItem(LEGACY_HOST);
+    if (legacy && !loadHistory().length) {
+      pushHistory({ host: legacy, name: '', url: '' });
+    }
+    if (legacy) localStorage.removeItem(LEGACY_HOST);
+  } catch (e) {}
+
+  function showHome() {
+    moduleActive = false;
+    navigationId++;
+    clearTimeout(openTimer);
+    view.onload = null;
+    view.style.display = 'none';
+    view.removeAttribute('srcdoc');
+    view.removeAttribute('src');
+    gate.classList.add('hide');
+    settings.classList.add('hide');
+    localView.classList.add('hide');
+    fab.classList.add('hide');
+    homeBack.classList.add('hide');
+    document.body.classList.remove('module-open');
+    home.classList.remove('hide');
+  }
+  function openShipping() {
+    cache = readJSON(CACHE_KEY, null);
+    var saved = current || loadAuto() || loadHistory().find(function (item) { return item.url; });
+    if (!saved && cache && cache.url) saved = { url: cache.url };
+    if (saved && saved.url) {
+      current = saved;
+      leaveTo(saved.url);
+    } else {
+      if (window.shippingUpdates) window.shippingUpdates.loadFrame(view);
+    else view.src = './shipping/index.html';
+      view.style.display = 'block';
+      gate.classList.add('hide');
+    }
+  }
+  function enterModule(title) {
+    document.getElementById('shell-title').textContent = title || '入库与出货';
+    moduleActive = true;
+    home.classList.add('hide');
+    homeBack.classList.remove('hide');
+    document.body.classList.add('module-open');
+  }
+  homeBack.addEventListener('click', showHome);
+  document.getElementById('module-warehouse').addEventListener('click', function () { enterModule(); openShipping(); });
+  document.getElementById('module-settings').addEventListener('click', function () { enterModule('设备与连接'); openSettings(); });
+  showHome();
+  if (window.shippingUpdates) {
+    window.addEventListener('shipping-update-status', function () {
+      var status = document.getElementById('page-update-status');
+      if (status) status.textContent = window.shippingUpdates.status();
+      var apply = document.getElementById('apply-page-update');
+      if (apply) apply.disabled = !window.shippingUpdates.hasPending();
+    });
+    window.shippingUpdates.ready();
+    var entry = readJSON('shipping-shell.current', null) || loadAuto() || loadHistory().find(function (x) { return x.url; });
+    if (entry && entry.url) void window.shippingUpdates.check(entry.url);
+  }
+})();
+</script>
+</body>
+</html>

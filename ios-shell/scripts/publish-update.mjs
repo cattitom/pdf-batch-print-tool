@@ -1,0 +1,16 @@
+import './sync-mobile.mjs';
+import { buildUpdate } from './update-package.mjs';
+import { mkdir, writeFile, rename } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== '--output')) throw new Error('用法：node ios-shell/scripts/publish-update.mjs [--output 更新文件路径]');
+const target = args[1] ? resolve(args[1]) : fileURLToPath(new URL('../../data/mobile-app/update.json', import.meta.url));
+const update = await buildUpdate();
+await mkdir(dirname(target), { recursive: true });
+const temp = target + '.tmp';
+await writeFile(temp, JSON.stringify(update));
+await rename(temp, target);
+console.log('手机页面版本：' + update.version.slice(0, 12));
+console.log('更新文件：' + target);
+console.log('手机连接这台电脑后会下载更新，下次打开生效。');

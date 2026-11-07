@@ -61,7 +61,7 @@ export function usePackingChecks(options: Options) {
     const normalized = changes.map((r) => ({
       waybill: r.waybill.trim(), inbound: r.inbound.trim(), name: r.name.trim(), checked: r.checked,
     }));
-    if (normalized.some((r) => r.checked && (!r.inbound || !r.waybill))) {
+    if (normalized.some((r) => r.checked && (!r.inbound || !r.waybill) && !rowsRef.current.some((row) => rowKey(row) === rowKey(r) && row.issues?.includes("special_amazon")))) {
       setError("入库号和单号必须都填写，才能出货");
       return false;
     }

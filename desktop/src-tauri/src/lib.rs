@@ -1,6 +1,7 @@
 pub mod commands;
 mod logging;
 mod mobile;
+mod mobile_update;
 mod wechat;
 // 示例 examples/label_ocr.rs 直接调 OCR 跑真图验证，所以这里 pub
 #[cfg(windows)]

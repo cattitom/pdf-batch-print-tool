@@ -420,7 +420,7 @@ fn prepare_rows(rows: &mut [MobileRow], old: &[MobileRow]) {
     static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let same = rows.len() == old.len() && rows.iter().zip(old).all(|(a,b)|
         record_id(&a.waybill,&a.inbound,&a.name) == record_id(&b.waybill,&b.inbound,&b.name)
-        && a.qty == b.qty && a.blocked == b.blocked && a.source_id == b.source_id);
+        && a.qty == b.qty && a.issues == b.issues && a.blocked == b.blocked && a.source_id == b.source_id);
     let dataset = if same && !old.is_empty() { old[0].dataset_id.clone() } else {
         format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos(),
             GENERATION.fetch_add(1, Ordering::Relaxed))
@@ -446,11 +446,18 @@ pub fn commit_checks(
     let mut inner = shared.inner.lock().map_err(|_| (500,"手机状态锁异常".into()))?;
     let mut indices = Vec::new();
     for (waybill,inbound,name,checked) in changes {
-        if *checked && (waybill.trim().is_empty() || inbound.trim().is_empty()) {
-            return Err((400,"入库号和单号必须都填写，才能出货".into()));
-        }
         let id = record_id(waybill,inbound,name);
         let index = inner.rows.iter().position(|r| record_id(&r.waybill,&r.inbound,&r.name) == id);
+        // 例外只认桌面已保存的明确标记，不信任手机请求携带的字段。
+        if *checked && (waybill.trim().is_empty() || inbound.trim().is_empty()) {
+            let raw = shared.db.lock().map_err(|_| (500,"数据库锁异常".to_string()))?
+                .get_setting("packing_special_shipments").map_err(|e| (500,e.to_string()))?;
+            let special = raw.and_then(|s| serde_json::from_str::<std::collections::HashMap<String,String>>(&s).ok())
+                .and_then(|m| m.get(&id).cloned());
+            if special.as_deref() != Some("亚马逊") {
+                return Err((400,"入库号和单号必须都填写，才能出货".into()));
+            }
+        }
         if inner.info.is_some() {
             let row = index.map(|i| &inner.rows[i]).ok_or((409,"表格已改变，请刷新后重试".to_string()))?;
             let expected = expected.and_then(|v| v.iter().find(|r| r.record_id == id))
@@ -611,6 +618,13 @@ fn handle(mut req: Request, shared: &MobileShared) {
             "application/json; charset=utf-8",
             403,
         ),
+        (Method::Get, "/api/app-update/manifest") | (Method::Get, "/api/app-update/bundle") => {
+            let version = query.split('&').find_map(|kv| kv.strip_prefix("v="));
+            match crate::mobile_update::response(version, path.ends_with("/manifest")) {
+                Ok(body) => respond(req, body, "application/json; charset=utf-8", 200),
+                Err((status, error)) => respond(req, json!({"error":error}).to_string(), "application/json; charset=utf-8", status),
+            }
+        }
         (Method::Get, "/api/sheet") => {
             let (rows, updated) = previous(shared);
             respond(
@@ -874,6 +888,23 @@ mod tests {
         stop(&shared);
     }
 
+    #[test]
+    fn amazon_exception_requires_persisted_annotation() {
+        let shared = new_shared();
+        let id = record_id("", "", "亚马逊货品");
+        let changes = vec![("".into(), "".into(), "亚马逊货品".into(), true)];
+        assert_eq!(commit_checks(&shared, &changes, None).unwrap_err().0, 400);
+        shared.db.lock().unwrap().set_setting("packing_special_shipments",
+            &serde_json::json!({id.clone(): "亚马逊"}).to_string()).unwrap();
+        commit_checks(&shared, &changes, None).unwrap();
+        assert!(shared.db.lock().unwrap().all_packing_checks().unwrap()[0].3);
+        let other = vec![("".into(), "".into(), "普通货品".into(), true)];
+        assert_eq!(commit_checks(&shared, &other, None).unwrap_err().0, 400);
+        shared.db.lock().unwrap().set_setting("packing_special_shipments", "{}").unwrap();
+        assert_eq!(commit_checks(&shared, &changes, None).unwrap_err().0, 400);
+        commit_checks(&shared, &[("".into(), "".into(), "亚马逊货品".into(), false)], None).unwrap();
+    }
+
     fn http(host: &str, req: &str) -> String {
         let mut s = TcpStream::connect(host).expect("connect");
         s.write_all(req.as_bytes()).expect("write");
@@ -917,6 +948,13 @@ mod tests {
         );
         assert!(sheet.contains("测试货"));
         assert!(sheet.contains("\"rows\""));
+        let manifest = http(&host, &format!("GET /api/app-update/manifest?t={} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", info.token));
+        assert!(manifest.contains("200 OK") && manifest.contains("shellApi"));
+        let private_update = http(&host, "GET /api/app-update/manifest HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        assert!(private_update.contains("403"));
+        let stale_update = http(&host, &format!("GET /api/app-update/bundle?t={}&v=stale HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", info.token));
+        assert!(stale_update.contains("409"));
+
         let unpaired = http(&host, "GET /api/sheet HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
         assert!(unpaired.contains("403"));
 

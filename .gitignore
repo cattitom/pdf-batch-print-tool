@@ -72,3 +72,6 @@ feishu-sample/
 
 # 本机验证构建产物
 /desktop/dist-verify/
+
+# 本机发布的手机页面更新
+/data/mobile-app/

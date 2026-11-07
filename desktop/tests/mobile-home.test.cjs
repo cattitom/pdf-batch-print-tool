@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 function setup(){
- const html=fs.readFileSync(path.join(__dirname,'../../ios-shell/web/index.html'),'utf8');
+ const html=fs.readFileSync(path.join(__dirname,'../../ios-shell/web/app.html'),'utf8');
  const elements=new Map(),calls=[];let resolveDiscovery;
  function element(id){
   if(elements.has(id))return elements.get(id);

@@ -58,3 +58,12 @@ test('缺号码的旧已出记录仍可撤回',async()=>{
   assert.equal(await h.render().saveChecks([{...h.row,waybill:'',inbound:'',checked:false}]),true);
   assert.equal(h.calls.length,1);
 });
+
+test('亚马逊免单号只认当前行已保存标记，撤销后恢复拦截',async()=>{
+ const h=setup();
+ h.options.rowsRef.current=[{...h.row,waybill:'',inbound:'',issues:['special_amazon']}];
+ assert.equal(await h.render().saveChecks([{...h.options.rowsRef.current[0],checked:true}]),true);
+ h.options.rowsRef.current=[{...h.row,waybill:'',inbound:'',issues:[]}];
+ assert.equal(await h.render().saveChecks([{...h.options.rowsRef.current[0],issues:['special_amazon'],checked:true}]),false);
+ assert.equal(h.calls.length,1);
+});

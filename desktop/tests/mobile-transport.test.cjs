@@ -46,3 +46,13 @@ test('iOS 内置资源与共享界面保持一致，构建产物不依赖远程 
  for(const file of ['m.css','m.js'])assert.equal(fs.readFileSync(path.join(root,'ios-shell/web/shipping',file),'utf8'),fs.readFileSync(path.join(root,'desktop/src-tauri/mobile',file),'utf8'));
  const html=fs.readFileSync(path.join(root,'ios-shell/web/shipping/index.html'),'utf8');assert.match(html,/src="\.\/transport.js"/);assert.doesNotMatch(html,/src="https?:/);
 });
+
+test('亚马逊免单号离线操作可排队，普通无号记录仍被拦截',async()=>{
+ const h=setup();
+ const special={...row,waybill:'',inbound:'',issues:['special_amazon']};
+ h.store.set('shipping-shell.cache',JSON.stringify({url,at:1,rows:[special]}));
+ await h.api.check(special,true);
+ assert.equal(h.read('pending').length,1);
+ assert.equal(h.read('cache').rows[0].checked,true);
+ await assert.rejects(h.api.check({...special,issues:[]},true),/必须都填写/);
+});

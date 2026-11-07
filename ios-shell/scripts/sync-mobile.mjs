@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { buildUpdate } from './update-package.mjs';
 const source = new URL('../../desktop/src-tauri/mobile/', import.meta.url);
 const target = new URL('../web/shipping/', import.meta.url);
 await mkdir(target, { recursive: true });
@@ -7,3 +8,4 @@ let html = await readFile(new URL('index.html', source), 'utf8');
 html = html.replace('href="/m.css"', 'href="./m.css"').replace('<script src="/m.js"></script>', '<script src="./transport.js"></script>\n    <script src="./m.js"></script>');
 await writeFile(new URL('index.html', target), html);
 console.log('已将清单页面、样式与交互打入手机本地资源');
+await writeFile(new URL('../web/builtin-update.json', import.meta.url), JSON.stringify(await buildUpdate()));

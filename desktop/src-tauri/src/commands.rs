@@ -656,9 +656,6 @@ pub fn set_packing_checks(_state: State<AppState>, mobile_state: State<MobileSha
     let changes: Vec<_> = changes.into_iter().map(|r|
         (r.waybill.trim().to_owned(), r.inbound.trim().to_owned(), r.name.trim().to_owned(), r.checked)
     ).collect();
-    if changes.iter().any(|(waybill, inbound, _, checked)| *checked && waybill.is_empty() && inbound.is_empty()) {
-        return Err(ApiError::new("invalid", "没有单号和入库号的行不能出货"));
-    }
     mobile::commit_checks(&mobile_state, &changes, expected.as_deref())
         .map_err(|(status,message)| ApiError::new(if status == 409 { "conflict" } else { "db" }, message))
 }

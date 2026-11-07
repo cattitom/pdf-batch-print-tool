@@ -247,6 +247,14 @@ async fn discover_at(host: String) -> Result<Peer, String> {
         .map_err(|e| format!("发现任务崩了：{e}"))?
 }
 
+/// WebView 的自定义协议环境未必提供 WebCrypto，摘要始终可在原生层计算。
+#[tauri::command]
+fn hash_update_payload(payload: String) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    if payload.len() > 1024 * 1024 { return Err("更新包过大".into()); }
+    Ok(format!("{:x}", Sha256::digest(payload.as_bytes())))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)]
@@ -257,7 +265,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     }
     builder
-        .invoke_handler(tauri::generate_handler![discover_peer, discover_at])
+        .invoke_handler(tauri::generate_handler![discover_peer, discover_at, hash_update_payload])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
