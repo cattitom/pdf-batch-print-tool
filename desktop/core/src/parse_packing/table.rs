@@ -15,11 +15,27 @@ pub(crate) enum Col {
     Waybill,
     /// 原表的「到货情况」（到货 / 未到货 / 部分到货），界面插在出货详情与备注之间
     Arrival,
+    Cargo,
     Ignore,
     Unknown,
 }
 
+fn cargo_field(header: &str) -> Option<&'static str> {
+    let h: String = header.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    if ["每箱数量", "装箱数量", "装箱数", "单箱数量", "每箱件数"].iter().any(|k| h.contains(k)) { return Some("perBox"); }
+    if ["包装规格", "产品规格", "商品规格"].iter().any(|k| h.contains(k)) || h == "规格" { return Some("specification"); }
+    if h == "长" || h.starts_with("长(") || h.starts_with("长（") || h.starts_with("长cm") || h.starts_with("长度") { return Some("length"); }
+    if h == "宽" || h.starts_with("宽(") || h.starts_with("宽（") || h.starts_with("宽cm") || h.starts_with("宽度") { return Some("width"); }
+    if h == "高" || h.starts_with("高(") || h.starts_with("高（") || h.starts_with("高cm") || h.starts_with("高度") { return Some("height"); }
+    if h.contains("实际重量") || h.contains("实重") || h.contains("毛重") { return Some("actualWeight"); }
+    if h.contains("体积") { return Some("sourceVolume"); }
+    if h.contains("尺寸") || h == "箱规" { return Some("dimensions"); }
+    if h.contains("备注") { return Some("remarks"); }
+    None
+}
+
 pub(crate) fn classify(header: &str) -> Col {
+    if cargo_field(header).is_some() { return Col::Cargo; }
     let h = header.to_lowercase();
     let has = |keys: &[&str]| keys.iter().any(|k| h.contains(k));
 
@@ -72,6 +88,7 @@ pub(crate) fn classify(header: &str) -> Col {
 pub(crate) struct RawRow {
     name: String,
     qty_raw: String,
+    cargo: BTreeMap<String, String>,
     inbound: String,
     destination: String,
     /// 原表的「到货情况」
@@ -97,6 +114,7 @@ pub(crate) struct Strategy {
     waybill: Option<usize>,
     arrival: Option<usize>,
     label: String,
+    cargo_columns: Vec<(String, usize)>,
 }
 
 impl Strategy {
@@ -140,6 +158,7 @@ impl Strategy {
             waybill,
             arrival,
             label,
+            cargo_columns: header.iter().enumerate().filter_map(|(i, h)| cargo_field(h).map(|key| (key.to_string(), i))).collect(),
         })
     }
 
@@ -159,6 +178,7 @@ impl Strategy {
             waybill: None,
             arrival: None,
             label: "按截图模板列序：名称=1 数量=7 标记=8 目的地=10 入库号=11".to_string(),
+            cargo_columns: [("length",1),("width",2),("height",3),("actualWeight",4),("sourceVolume",5)].into_iter().map(|(k,i)| (k.to_string(),i)).collect(),
         })
     }
 
@@ -181,6 +201,7 @@ impl Strategy {
             .and_then(|s| extract_waybill(s));
 
         let mut out = RawRow {
+            cargo: self.cargo_columns.iter().map(|(key, i)| (key.clone(), get(*i))).collect(),
             name: get(self.name),
             qty_raw: get(self.qty),
             inbound: get(self.inbound),
@@ -239,6 +260,7 @@ pub(crate) fn guess_row(row: &[String]) -> RawRow {
     });
 
     RawRow {
+        cargo: BTreeMap::new(),
         name: row.first().cloned().unwrap_or_default(),
         qty_raw: qty_idx.map(|i| row[i].clone()).unwrap_or_default(),
         inbound,
@@ -308,9 +330,20 @@ pub(crate) fn parse_table_styled(
     }
 
     let header = detect_header(&rows);
-    let strategy = header
+    let mut strategy = header
         .and_then(|i| Strategy::from_header(&rows[i]))
         .or_else(|| Strategy::positional(&rows));
+    // WPS 来货登记首行合并为“箱规/箱”，第二层表头才给出长、宽、高。
+    if let (Some(index), Some(strategy)) = (header, strategy.as_mut()) {
+        for row in rows.iter().skip(index + 1).take(2).take_while(|row| is_header_like(row)) {
+            for (i, cell) in row.iter().enumerate() {
+                if let Some(key) = cargo_field(cell) {
+                    if !strategy.cargo_columns.iter().any(|(existing, _)| existing == key) { strategy.cargo_columns.push((key.into(), i)); }
+                }
+            }
+        }
+    }
+
 
     sheet.mapping = match &strategy {
         Some(s) => s.label.clone(),
@@ -405,6 +438,7 @@ pub(crate) fn parse_table_styled(
         }
 
         let mut item = PackingItem {
+            cargo: raw.cargo.clone(),
             name: raw.name.trim().to_string(),
             qty_raw: raw.qty_raw.trim().to_string(),
             inbound: raw.inbound.trim().to_string(),
@@ -426,6 +460,20 @@ pub(crate) fn parse_table_styled(
             checked: raw.mark.unwrap_or(false) || raw.red,
             ..Default::default()
         };
+
+        // WPS 把“1件装，285/箱”写在产品名称中时，同时保存结构化规格，名称原文不变。
+        static PER_BOX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        static SPEC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        if item.cargo.get("perBox").is_none_or(|v| v.trim().is_empty()) {
+            if let Some(c) = PER_BOX.get_or_init(|| regex::Regex::new(r"(\d+)\s*[/／]\s*箱").unwrap()).captures(&item.name) {
+                item.cargo.insert("perBox".into(), c[1].into());
+            }
+        }
+        if item.cargo.get("specification").is_none_or(|v| v.trim().is_empty()) {
+            if let Some(c) = SPEC.get_or_init(|| regex::Regex::new(r"\s+(\d+\s*件装[^,，]*)").unwrap()).captures(&item.name) {
+                item.cargo.insert("specification".into(), c[1].trim().into());
+            }
+        }
 
         // 客户名称通常只在段首写一次，下面沿用
         if item.customer.is_empty() {

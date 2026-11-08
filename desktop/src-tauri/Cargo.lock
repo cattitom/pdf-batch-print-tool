@@ -4047,6 +4047,7 @@ dependencies = [
  "pdfium-render",
  "printpdf",
  "qrcode",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

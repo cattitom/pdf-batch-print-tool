@@ -7,7 +7,10 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i64 = 2;
+mod cargo;
+pub use cargo::PackingCargoRecord;
+
+pub const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS print_history (
@@ -174,6 +177,12 @@ impl Db {
         if version < 2 {
             self.conn.execute_batch(SCHEMA_V2)?;
             self.conn.pragma_update(None, "user_version", 2)?;
+        }
+        if version < 3 {
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(cargo::SCHEMA)?;
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
         }
         Ok(())
     }

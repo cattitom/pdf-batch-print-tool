@@ -30,6 +30,8 @@ pub struct PackingItem {
     pub qty: i64,
     /// 数量原文，解析失败时给界面显示
     pub qty_raw: String,
+    /// 原表货物规格、尺寸重量及备注，保留单元格原文。
+    pub cargo: std::collections::BTreeMap<String, String>,
     pub inbound: String,
     pub destination: String,
     /// 原表的「到货情况」原样带过来（到货 / 未到货 / 部分到货），界面只读展示

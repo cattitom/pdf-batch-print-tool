@@ -311,6 +311,8 @@ export const api = {
     invoke<WechatExport>("wechat_export_csv", { account, chatId, days, kind, path }),
 
   // 设置
+  cachePackingCargo: (rows: PackingItemDto[], source: string) => invoke<void>("cache_packing_cargo", { rows, source }),
+  packingCargo: (row: PackingItemDto) => invoke<{ cargo: Record<string, string>; source: string } | null>("packing_cargo", { row }),
   allSettings: () => invoke<Record<string, string>>("all_settings"),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
 

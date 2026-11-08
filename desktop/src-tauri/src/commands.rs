@@ -682,7 +682,7 @@ pub fn clear_packing_checks(state: State<AppState>) -> Result<(), ApiError> {
 // ---------- 装箱单解析 ----------
 
 /// 一条出货待办。字段名与 core::PackingItem 一致，前端直接渲染。
-#[derive(Debug, Serialize, ts_rs::TS)]
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct PackingItemDto {
@@ -691,6 +691,9 @@ pub struct PackingItemDto {
     #[ts(type = "number")]
     pub qty: i64,
     pub qty_raw: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cargo: Option<std::collections::BTreeMap<String, String>>,
     pub inbound: String,
     pub destination: String,
     /// 原表的「到货情况」（到货 / 未到货 / 部分到货）
@@ -732,6 +735,7 @@ impl From<core::PackingSheet> for PackingSheetDto {
                     name: i.name,
                     qty: i.qty,
                     qty_raw: i.qty_raw,
+                    cargo: Some(i.cargo),
                     inbound: i.inbound,
                     destination: i.destination,
                     arrival: i.arrival,
@@ -750,6 +754,25 @@ impl From<core::PackingSheet> for PackingSheetDto {
             engine: String::new(),
         }
     }
+}
+
+fn cargo_record(row: PackingItemDto, source: String) -> core::db::PackingCargoRecord {
+    core::db::PackingCargoRecord { customer:row.customer,inbound:row.inbound,name:row.name,destination:row.destination,
+        waybill:row.waybill,seq:row.seq,qty:row.qty,cargo:row.cargo.unwrap_or_default(),source }
+}
+
+#[tauri::command]
+pub fn cache_packing_cargo(state: State<AppState>, rows: Vec<PackingItemDto>, source: String) -> Result<(), ApiError> {
+    let records: Vec<_> = rows.into_iter().filter(|r| r.cargo.as_ref().is_some_and(|c| !c.is_empty())).map(|r| {
+        let origin = if r.issues.iter().any(|c| c == "history_archive") { "本地存档".to_owned() } else { source.clone() };
+        cargo_record(r, origin)
+    }).collect();
+    db(&state).cache_packing_cargo(&records).map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub fn packing_cargo(state: State<AppState>, row: PackingItemDto) -> Result<Option<core::db::PackingCargoRecord>, ApiError> {
+    db(&state).packing_cargo(&cargo_record(row, String::new())).map_err(ApiError::from)
 }
 
 /// 粘贴文本（Excel 直接复制 = 制表符分隔）→ 结构化待办。

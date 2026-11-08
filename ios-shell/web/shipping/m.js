@@ -347,9 +347,9 @@ if (window.parent && window.parent !== window) document.documentElement.classLis
       esc(r.name) +
       "</div>" +
       '<span class="mono inb">' +
-      esc(r.inbound || (isAmazon(r) ? "免单号" : "无入库号")) +
+      esc(r.inbound || (isAmazon(r) ? "—" : "无入库号")) +
       "</span>" +
-      (isAmazon(r) ? '<span class="tag">亚马逊 · 免单号</span>' : "") +
+      (isAmazon(r) ? '<span class="tag">亚马逊</span>' : "") +
       (r.task ? '<span class="tag task">任务</span>' : "") +
       (hasProblem(r) ? '<span class="tag">待确认</span>' : "") +
       "</div>" +

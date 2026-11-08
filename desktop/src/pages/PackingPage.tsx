@@ -1,6 +1,8 @@
+import { PackingRowDetails, businessHints } from "./packing/PackingRowDetails";
 import { usePackingArchive } from "./packing/usePackingArchive";
 import { HISTORY_ISSUE, ARCHIVED_WAYBILL_ISSUE } from "./packing/archiveRows";
 import { PackingSaveStatus } from "./packing/PackingSaveStatus";
+import { ColumnFilterTitle, type FilterOption } from "./packing/ColumnFilter";
 import { rowKey } from "./packing/recordKey";
 import { usePackingChecks } from "./packing/usePackingChecks";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -37,7 +39,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   FileTextOutlined,
-  FilterFilled,
+  FilterOutlined,
   FolderOpenOutlined,
   InboxOutlined,
   LoginOutlined,
@@ -80,54 +82,6 @@ type FoldRow = {
 type TableRow = PackingRow | FoldRow;
 
 const isFold = (r: TableRow): r is FoldRow => "__fold" in r;
-
-/** 列筛选面板：勾选立即生效，不用点「确定」；带搜索框。 */
-function ColumnFilter({
-  options,
-  value,
-  onChange,
-}: {
-  options: { text: string; value: string }[];
-  value: string[] | null;
-  onChange: (v: string[] | null) => void;
-}) {
-  const [q, setQ] = useState("");
-  const picked = value ?? [];
-  const shown = q ? options.filter((o) => o.text.toLowerCase().includes(q.toLowerCase())) : options;
-  return (
-    <div style={{ padding: 8, width: 236 }} onClick={(e) => e.stopPropagation()}>
-      {options.length > 8 && (
-        <Input
-          size="small"
-          allowClear
-          placeholder="搜索"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ marginBottom: 6 }}
-        />
-      )}
-      <div style={{ maxHeight: 220, overflowY: "auto" }}>
-        <Checkbox.Group
-          value={picked}
-          onChange={(v) => onChange((v as string[]).length ? (v as string[]) : null)}
-          style={{ display: "flex", flexDirection: "column", gap: 2 }}
-        >
-          {shown.map((o) => (
-            <Checkbox key={o.value} value={o.value} style={{ marginInlineStart: 0 }}>
-              {o.text}
-            </Checkbox>
-          ))}
-        </Checkbox.Group>
-      </div>
-      <div style={{ marginTop: 6, textAlign: "right" }}>
-        <Button size="small" type="link" onClick={() => onChange(null)}>
-          清空
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 
 /**
  * 出货清单：粘贴 Excel 表格 / 拖 xlsx·csv / 拖截图，自动拆成「目的地 + 单号」分组，
@@ -273,6 +227,8 @@ export default function PackingPage({
   const [rows, setRows] = useState<PackingItemDto[]>([]);
   const { archiveError, archiveItems, mergeArchiveRows } = usePackingArchive(rows);
   const [sheet, setSheet] = useState<PackingSheetDto | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const detailRow = detailKey ? rows.find((row) => rowKey(row) === detailKey) : undefined;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mobileVersionsRef = useRef<MobileRowDto[]>([]);
@@ -508,7 +464,7 @@ export default function PackingPage({
   // 筛选条件一变就清空多选，避免批量操作作用到看不见的行
   useEffect(() => {
     setSelected([]);
-  }, [q, pickedWaybills, onlyIssues, foldChecked, inboundStatus]);
+  }, [q, pickedWaybills, onlyIssues, foldChecked, inboundStatus, colFilters, taskOnly]);
 
   /** 看板两列：未出 / 已出（跟当前单号筛选一致） */
   const pendingRows = visibleOrder
@@ -593,38 +549,17 @@ export default function PackingPage({
   };
 
   const monoStyle = { fontFamily: "Consolas, monospace" };
-  /** 列头 = 标题 + 漏斗，点漏斗在原位弹筛选面板（不跳位置）。 */
-  const filterTitle = (label: string, key: string, options: { text: string; value: string }[]) => {
-    const active = !!colFilters[key]?.length;
-    return (
-      <Space size={4}>
-        <span>{label}</span>
-        <Popover
-          trigger="click"
-          placement="bottomRight"
-          arrow={false}
-          styles={{ content: { padding: 0 } }}
-          content={
-            <ColumnFilter
-              options={options}
-              value={colFilters[key] ?? null}
-              onChange={(v) => setColFilters((prev) => ({ ...prev, [key]: v }))}
-            />
-          }
-        >
-          <FilterFilled
-            style={{ fontSize: 11, cursor: "pointer", color: active ? "#5c7fa3" : "#c9c4b9" }}
-          />
-        </Popover>
-      </Space>
-    );
-  };
+  const filterLabels: Record<string, string> = { customer: "客户名称", name: "商品名称", checked: "出货详情", destination: "收货仓", inbound: "入库号", waybill: "单号" };
+  const filterTitle = (label: string, key: string, options: FilterOption[]) => (
+    <ColumnFilterTitle label={label} options={options} value={colFilters[key] ?? null}
+      onApply={(value) => setColFilters((prev) => ({ ...prev, [key]: value }))} />
+  );
 
   /** 每列的可选值（去重排序），给 Excel 式筛选用 */
   const optionsOf = (pick: (r: PackingItemDto) => string, emptyLabel = "(空)") => {
-    const set = new Set<string>();
-    rows.forEach((r) => set.add(pick(r) || emptyLabel));
-    return [...set].sort().map((v) => ({ text: v, value: v }));
+    const counts = new Map<string, number>();
+    rows.forEach((r) => { const value = pick(r) || emptyLabel; counts.set(value, (counts.get(value) ?? 0) + 1); });
+    return [...counts.keys()].sort().map((value) => ({ text: value, value, count: counts.get(value)! }));
   };
   const custOptions = optionsOf((r) => r.customer);
   const nameOptions = optionsOf((r) => r.name);
@@ -660,23 +595,6 @@ export default function PackingPage({
         ),
     },
     {
-      // 本次出货任务：从截图导入时打勾，手机端默认只看这批。放最左边，扫一眼就知道哪几行要出
-      title: "任务",
-      key: "task",
-      width: 60,
-      align: "center" as const,
-      render: (_: unknown, r: TableRow) => {
-        if (isFold(r)) return null;
-        if (!taskSet.has(r.inbound.trim())) return <span className="cell-dash">—</span>;
-        const id = taskIdByWaybill.get(r.waybill.trim() || "未识别单号");
-        return (
-          <span className="task-mark" title={`本次任务 ${id ?? ""}（按单号分组）`}>
-            {id ?? "✓"}
-          </span>
-        );
-      },
-    },
-    {
       title: filterTitle("客户名称", "customer", custOptions),
       dataIndex: "customer",
       width: 108,
@@ -707,10 +625,10 @@ export default function PackingPage({
           );
         }
         return (
-          <div>
+          <div className="packing-name-cell">
           {r.issues.includes(ARCHIVED_WAYBILL_ISSUE) && <span className="packing-history-label" title="原表单号已清空，按入库号和商品明细唯一匹配本地存档恢复">单号来自存档</span>}
           {r.issues.includes(HISTORY_ISSUE) && <span className="packing-history-label" title="原表中已无此记录，由本地数据库保留；出货状态为保存记录">历史存档</span>}
-          {!v.trim() && <span className="packing-unnamed-label" title="原表商品名称为空，数量仍计入合计，请核对并补充名称">待补商品名 · 已计入数量</span>}
+          {!v.trim() && <span className="packing-unnamed-label" title="原表商品名称为空，数量仍计入合计，请核对并补充名称">待补商品名</span>}
           <Input
             variant="borderless"
             value={v}
@@ -739,11 +657,11 @@ export default function PackingPage({
     },
     {
       title: filterTitle("出货详情", "checked", [
-          { text: "未出", value: "todo" },
-          { text: "已出", value: "done" },
+          { text: "未出货", value: "todo", count: rows.filter((r) => !r.checked).length },
+          { text: "已出货", value: "done", count: rows.filter((r) => r.checked).length },
         ]),
       dataIndex: "checked",
-      width: 92,
+      width: 108,
       render: (v: boolean, r: TableRow) =>
         isFold(r) ? null : (
           <button
@@ -780,31 +698,25 @@ export default function PackingPage({
         ),
     },
     {
-      title: "备注",
+      title: "业务提示",
       key: "issues",
       width: 175,
       render: (_: unknown, r: TableRow) => {
         if (isFold(r)) return null;
-        const shown = r.issues.filter((c) => SHOWN_ISSUES.has(c));
         const special = r.issues.includes(SPECIAL_AMAZON);
-        if (special || rowBlocked(r)) return (
-          <Tooltip title={special ? "特殊出货，备注：亚马逊；无需单号和入库号。未出货时可点击取消。" : "将这一行标记为亚马逊特殊出货，允许免单号和入库号"}>
-            <Button size="small" type="text" style={special ? { color: "#a65c00", background: "#fff4e5" } : undefined} disabled={savingSpecial || (r.checked && special)} onClick={() => void setAmazon(r.__idx, !special)}>
-              {special ? "亚马逊 · 免单号" : "标记亚马逊免单号"}
+        if (special || (r.customer.trim() === "果粒橙" && rowBlocked(r))) return (
+          <Tooltip title={special ? "亚马逊出货，单独按亚马逊单号分组" : "将这一行归入亚马逊单号"}>
+            <Button size="small" type="text" style={special ? { color: "#a65c00", background: "#fff4e5" } : undefined} disabled={savingSpecial || (r.checked && special)} onClick={() => { if (!special) void setAmazon(r.__idx, true); }}>
+              {special ? "亚马逊" : "标记亚马逊"}
             </Button>
           </Tooltip>
         );
-        if (shown.length === 0) return <span className="cell-dash">—</span>;
-        const text = ISSUE_TEXT[shown[0]] ?? shown[0];
-        const isNote = shown.every((c) => NOTE_ISSUES.has(c));
-        return (
-          <Tooltip title={shown.map((c) => ISSUE_TEXT[c] ?? c).join("、")}>
-            <span className={`issue-tag${isNote ? " note" : ""}`}>
-              {text}
-              {shown.length > 1 ? ` +${shown.length - 1}` : ""}
-            </span>
-          </Tooltip>
-        );
+        const hints = businessHints(r);
+        if (!hints.length) return <span className="cell-dash">—</span>;
+        return <button className="packing-business-hint" onClick={() => setDetailKey(rowKey(r))}
+          title={hints.join("、")} aria-label={`查看${r.name || "无名商品"}的业务提示`}>
+          {hints[0]}{hints.length > 1 && <span> +{hints.length - 1}</span>}
+        </button>;
       },
     },
     {
@@ -827,12 +739,12 @@ export default function PackingPage({
       width: 190,
       render: (v: string, r: TableRow) =>
         isFold(r) ? null : (
-          <Space size={4} className={v.trim() ? "inbound-cell present" : "inbound-cell missing"}>
+          <Space size={4} className={v.trim() ? "inbound-cell present" : r.issues.includes(SPECIAL_AMAZON) ? "inbound-cell" : "inbound-cell missing"}>
             {v.trim() && <span className="inbound-dot" aria-label="已有入库号" />}
             <Input
               variant="borderless"
               value={v}
-              placeholder={r.issues.includes(SPECIAL_AMAZON) ? "免单号 · 亚马逊" : "待补入库号"}
+              placeholder={r.issues.includes(SPECIAL_AMAZON) ? "—" : "待补入库号"}
               aria-label="入库号"
               style={monoStyle}
               onChange={(e) => patch(r.__idx, { inbound: e.target.value })}
@@ -861,19 +773,17 @@ export default function PackingPage({
         ),
     },
     {
-      title: (
-        <Tooltip title="点行末图钉，把常看的货钉到表格上方">
-          <PushpinOutlined style={{ color: "#adb2b8" }} />
-        </Tooltip>
-      ),
+      title: "操作",
       key: "ops",
-      width: 72,
+      width: 118,
+      fixed: "right" as const,
       render: (_: unknown, r: TableRow) => {
         if (isFold(r)) return null;
         const key = rowKey(r);
         const isPinned = pinned.includes(key);
         return (
           <Space size={0}>
+            <Button type="link" size="small" onClick={() => setDetailKey(rowKey(r))} aria-label={`查看${r.name || "无名商品"}详情`}>详情</Button>
             <Button
               type="text"
               size="small"
@@ -911,25 +821,42 @@ export default function PackingPage({
     });
   }, [archiveItems, mergeArchiveRows]);
 
-  const applySheet = (s: PackingSheetDto, external = false) => {
+  const applySheet = async (s: PackingSheetDto, external = false) => {
     externalFileRef.current = external;
     sheetGenerationRef.current = crypto.randomUUID();
     mobileVersionsRef.current = [];
     // 原表里「产品名称 → 入库号」刷红字的就是已出货：这是原表作者亲手标的，比本地点出来的可信，
     // 所以红字的行直接用解析结果（本地旧记录不覆盖它）；其余行再把之前勾过的状态按指纹认回来。
+    const generation = sheetGenerationRef.current;
+    const nextSpecial = { ...specialRef.current };
+    const movedWaybills = new Set<string>();
     const liveItems = s.items.map((it) => {
       // 原表没写单号的行，这里先套上本地手改的那一个（测试 / 客户事后补单号都用得上）
       const local = waybillPatchRef.current[waybillPatchKey(it)];
       let row = local ? { ...it, waybill: local } : it;
       if (specialRef.current[rowKey(row)] === "亚马逊") row = { ...row, issues: [...row.issues.filter((c) => c !== SPECIAL_AMAZON), SPECIAL_AMAZON] };
+      const original = row;
+      if (row.customer.trim() === "果粒橙" && row.issues.includes(SPECIAL_AMAZON)) {
+        if (row.waybill !== "亚马逊") movedWaybills.add(row.waybill.trim() || "__none__");
+        row = { ...row, waybill: "亚马逊" };
+        nextSpecial[rowKey(row)] = "亚马逊";
+      }
       if (row.checked) return row;
       // 单号被本地改过时，两种指纹都认：改号之前点过的「已出」不该丢
       const saved =
-        checkedRef.current[rowKey(row)] ??
+        checkedRef.current[rowKey(row)] ?? checkedRef.current[rowKey(original)] ??
         (local ? checkedRef.current[rowKey(it)] : undefined);
       return saved === undefined ? row : { ...row, checked: saved };
     });
+    if (JSON.stringify(nextSpecial) !== JSON.stringify(specialRef.current)) {
+      try {
+        await api.setSetting(KEY_SPECIAL, JSON.stringify(nextSpecial));
+        specialRef.current = nextSpecial;
+      } catch (e) { setError("亚马逊分组保存失败：" + errorText(e)); return; }
+    }
+    if (generation !== sheetGenerationRef.current) return;
     const items = mergeArchiveRows(liveItems, checkedRef.current);
+    setDetailKey(null);
     setSheet(s);
     rowsRef.current = items;
     setRows(items);
@@ -939,9 +866,21 @@ export default function PackingPage({
     const present = new Set(items.map((it) => it.waybill.trim() || "__none__"));
     setPickedWaybills((prev) => {
       const kept = prev.filter((k) => present.has(k));
-      return kept.length === prev.length ? prev : kept;
+      if (prev.some((k) => movedWaybills.has(k)) && present.has("亚马逊") && !kept.includes("亚马逊")) kept.push("亚马逊");
+      return kept.length === prev.length && kept.every((key, index) => key === prev[index]) ? prev : kept;
     });
   };
+
+  // 开发模式热更新时，已加载的旧特殊记录也立即归入亚马逊。
+  useEffect(() => {
+    if (sheet && rows.some((r) => r.customer.trim() === "果粒橙" && r.issues.includes(SPECIAL_AMAZON) && r.waybill !== "亚马逊")) {
+      void applySheet({ ...sheet, items: rowsRef.current }, externalFileRef.current);
+    } else if (rows.some((r) => r.waybill === "亚马逊" && r.issues.includes(SPECIAL_AMAZON)) && !rows.some((r) => !r.waybill.trim())) {
+      setPickedWaybills((prev) => prev.includes("__none__") ? [...new Set([...prev.filter((key) => key !== "__none__"), "亚马逊"])] : prev);
+    }
+    // 仅在行身份变化时迁移，不重新读取原表。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   /** 云表格同步（状态 + 版本号缓存 + 定时检查都在 hook 里）。表的落地由 onApplied 交给页面。 */
   const {
@@ -967,6 +906,17 @@ export default function PackingPage({
     hasExternalFile: () => externalFileRef.current,
     hasRows: () => rowsRef.current.length > 0,
   });
+
+  // 原表资料独立落入 SQLite；删除原表行或关闭程序不会清除历史货物资料。
+  useEffect(() => {
+    const records = rows.filter((row) => row.cargo !== undefined && row.cargo !== null);
+    if (!records.length) return;
+    const timer = setTimeout(() => {
+      void api.cachePackingCargo(records, externalFileRef.current ? "本地表格 / 截图" : `WPS · ${cloudSheet || "来货登记"}`)
+        .catch((e) => setError("货物资料保存失败：" + errorText(e)));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [rows, cloudSheet]);
 
   /** 解析一个本地路径（文件选择器和「自动打开上次」共用）。 */
   const loadFromPath = async (path: string, silent = false) => {
@@ -1235,10 +1185,11 @@ export default function PackingPage({
   const setAmazon = async (i: number, enabled: boolean) => {
     const row = rowsRef.current[i];
     if (!row || savingSpecial || (row.checked && !enabled)) return;
+    if (enabled && row.customer.trim() !== "果粒橙") return;
     const source = sheetGenerationRef.current;
     const key = rowKey(row);
     const next = { ...specialRef.current };
-    if (enabled) next[key] = "亚马逊";
+    if (enabled) { next[key] = "亚马逊"; next[rowKey({ ...row, waybill: "亚马逊" })] = "亚马逊"; }
     else delete next[key];
     setSavingSpecial(true);
     try {
@@ -1246,10 +1197,12 @@ export default function PackingPage({
       specialRef.current = next;
       if (source === sheetGenerationRef.current) {
         const updated = rowsRef.current.map((r) => rowKey(r) === key ? {
-          ...r, issues: [...r.issues.filter((c) => c !== SPECIAL_AMAZON), ...(enabled ? [SPECIAL_AMAZON] : [])],
+          ...r, waybill: enabled ? "亚马逊" : r.waybill, issues: [...r.issues.filter((c) => c !== SPECIAL_AMAZON), ...(enabled ? [SPECIAL_AMAZON] : [])],
         } : r);
         rowsRef.current = updated;
         setRows(updated);
+        setSelected([]);
+        if (enabled) setPickedWaybills((prev) => prev.includes(row.waybill.trim() || "__none__") ? [...new Set([...prev, "亚马逊"])] : prev);
       }
     } catch (e) { setError("特殊出货标记保存失败：" + errorText(e)); }
     finally { setSavingSpecial(false); }
@@ -1825,6 +1778,7 @@ export default function PackingPage({
       {rows.length > 0 && (
         <Card
           size="small"
+          className="packing-details-card"
           title={
             <Space size={12}>
               <span>明细</span>
@@ -1891,6 +1845,25 @@ export default function PackingPage({
             </Space>
           }
         >
+          <div className="packing-view-tabs" role="group" aria-label="出货状态视图">
+            {[
+              { key: "all", label: "全部记录", count: shownOrder.length },
+              { key: "todo", label: "待出货", count: shownOrder.filter((i) => !rows[i].checked).length },
+              { key: "done", label: "已出货", count: shownOrder.filter((i) => rows[i].checked).length },
+            ].map((view) => <button key={view.key}
+              aria-pressed={view.key === "all" ? !checkedFilter?.length || checkedFilter.length === 2 : checkedFilter?.length === 1 && checkedFilter[0] === view.key}
+              onClick={() => setColFilters((prev) => ({ ...prev, checked: view.key === "all" ? null : [view.key] }))}>
+              {view.label}<span>{view.count}</span>
+            </button>)}
+          </div>
+          {Object.values(colFilters).some((values) => values?.length) && <div className="packing-active-filters" aria-label="当前列筛选条件">
+            <FilterOutlined />
+            {Object.entries(colFilters).filter(([, values]) => values?.length).map(([key, values]) => <span className="packing-filter-chip" key={key}>
+              <span title={values!.join("、")}>{filterLabels[key]}：{values!.map((v) => key === "checked" ? v === "done" ? "已出货" : "未出货" : v).join("、")}</span>
+              <button aria-label={`移除${filterLabels[key]}筛选`} onClick={() => setColFilters((prev) => ({ ...prev, [key]: null }))}><CloseOutlined /></button>
+            </span>)}
+            <button className="packing-clear-filters" onClick={() => setColFilters({})}>清除全部</button>
+          </div>}
           <div className="chips-head">
             <span className="chips-title">按单号</span>
             <span className="chips-sum">
@@ -2026,8 +1999,8 @@ export default function PackingPage({
               scroll={{ x: 1100, y: "100%" }}
               rowClassName={(r) => {
                 if (isFold(r)) return "packing-fold-row";
-                if (r.issues.includes(HISTORY_ISSUE)) return "packing-row-history" + (!r.inbound.trim() ? " packing-row-missing-inbound" : "");
-                if (!r.inbound.trim()) return "packing-row-missing-inbound";
+                if (r.issues.includes(HISTORY_ISSUE)) return "packing-row-history" + (!r.inbound.trim() && !r.issues.includes(SPECIAL_AMAZON) ? " packing-row-missing-inbound" : "");
+                if (!r.inbound.trim() && !r.issues.includes(SPECIAL_AMAZON)) return "packing-row-missing-inbound";
                 return r.issues.some((c) => PROBLEM_ISSUES.has(c)) ? "packing-row-warn" : "";
               }}
               onRow={(r) => {
@@ -2041,6 +2014,9 @@ export default function PackingPage({
           )}
         </Card>
       )}
+
+      <PackingRowDetails row={detailRow} source={externalFileRef.current ? "本地表格 / 截图" : cloudSheet ? `WPS 云表格 · ${cloudSheet}` : "WPS 云表格"}
+        mapping={sheet?.mapping} onClose={() => setDetailKey(null)} />
 
       {mobileOpen && mobileInfo && (
         <MobileSheetModal

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { ConfigProvider } from "antd";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
@@ -167,7 +168,9 @@ export default function App() {
             minWidth: 0,
           }}
         >
-          <PackingPage pendingDrop={packingDrop} active={tab === "packing"} />
+          <ConfigProvider theme={{ token: { colorPrimary: "#3370ff", colorPrimaryHover: "#245bdb", colorPrimaryActive: "#245bdb" } }}>
+            <PackingPage pendingDrop={packingDrop} active={tab === "packing"} />
+          </ConfigProvider>
         </div>
         <div style={{ display: tab === "boxplan" ? "block" : "none" }}>
           <BoxPlanPage />

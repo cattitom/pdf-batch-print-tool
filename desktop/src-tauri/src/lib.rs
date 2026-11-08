@@ -52,6 +52,8 @@ pub fn run() {
             commands::list_packing_checks,
             commands::clear_packing_checks,
             commands::log_dir,
+            commands::cache_packing_cargo,
+            commands::packing_cargo,
             commands::parse_packing_text,
             commands::parse_packing_file,
             commands::parse_packing_image,

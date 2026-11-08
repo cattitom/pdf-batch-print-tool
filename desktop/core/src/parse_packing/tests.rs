@@ -264,3 +264,22 @@ fn unnamed_goods_with_dimensions_are_not_totals() {
     assert_eq!(sheet.expected_qty, Some(777));
     assert!(!sheet.warnings.iter().any(|w| w.contains("合计对不上")));
 }
+#[test]
+fn reads_wps_two_level_cargo_headers() {
+    let text = "来货日期\t客户名称\t产品名称\t箱规/箱\t箱规/箱\t箱规/箱\t体积/箱\t实际重量/箱（KG）\t总箱数\t到货情况\t备注\t收货仓\t入库号\n来货日期\t客户名称\t产品名称\t长\t宽\t高\t体积/箱\t实际重量/箱（KG）\t总箱数\t到货情况\t备注\t收货仓\t入库号\n\t陈东龙\t面部刮痧  1件装 ， 285/箱\t53\t44\t42\t16.32\t17.6\t10\t到货\t轻放\t休斯顿\tIB015261107RS";
+    let sheet = super::parse_text(text);
+    assert_eq!(sheet.items.len(), 1);
+    let row = &sheet.items[0];
+    assert_eq!(row.qty, 10);
+    for (key, value) in [("length","53"),("width","44"),("height","42"),("actualWeight","17.6"),("sourceVolume","16.32"),("remarks","轻放"),("perBox","285"),("specification","1件装")] {
+        assert_eq!(row.cargo.get(key).map(String::as_str), Some(value));
+    }
+}
+
+#[test]
+fn per_box_quantity_is_not_total_boxes() {
+    let sheet = super::parse_text("客户名称\t商品名称\t每箱数量\t包装规格\t总箱数\t入库号\n陈东龙\t面部刮痧\t285\t1件装\t10\tIB015261107RS");
+    assert_eq!(sheet.items[0].qty, 10);
+    assert_eq!(sheet.items[0].cargo.get("perBox").map(String::as_str), Some("285"));
+    assert_eq!(sheet.items[0].cargo.get("specification").map(String::as_str), Some("1件装"));
+}
