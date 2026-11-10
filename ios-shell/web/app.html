@@ -281,21 +281,63 @@
     .module-card { transition: none; }
     .module-card:active { transform: none; }
   }
+  body.module-open #shell-nav { background: #fff; color: #1f2329; border-bottom: 1px solid #dee0e3; }
+  body.module-open #shell-settings, body.module-open #home-back { color: #3370ff; }
+  :root { --bg:#f5f6f8;--text:#1f2329;--dim:#828891;--accent:#3370ff; }
+  #home { padding:calc(16px + env(safe-area-inset-top)) 18px calc(24px + env(safe-area-inset-bottom));background:var(--bg); }
+  .workspace-head { display:flex;align-items:center;justify-content:space-between;margin:0 0 20px; }
+  #home .workspace-head h1 { margin:0;font-size:23px;letter-spacing:0;font-weight:650; }
+  .workspace-head>span { font-size:12px;color:#969ba3; }
+  .master-card { background:#fff;border:1px solid #e9ebef;border-radius:16px;margin-bottom:20px;padding:17px 16px 0;text-align:left; }
+  .master-heading { display:flex;justify-content:space-between;align-items:center;gap:8px; }
+  .master-heading strong { font-size:14px;font-weight:600; }
+  .master-heading>span { font-size:11px;color:#8b919b; }
+  .master-stats { display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:18px 0; }
+  .master-stats>div { display:flex;flex-direction:column;gap:3px; }
+  .master-stats b { font-size:25px;font-weight:650;font-variant-numeric:tabular-nums; }
+  .master-stats>div:nth-child(2) b { color:#3370ff; }
+  .master-stats span { color:#8b919b;font-size:11px; }
+  .master-note { border-top:1px solid #f0f1f4;padding:11px 0;font-size:11px;color:#858c96;overflow-wrap:anywhere; }
+  .module-card { padding:18px 15px;border-radius:14px;border-color:#e9ebef;box-shadow:none;gap:12px; }
+  .module-card.featured { background:#3370ff;padding:22px 15px;box-shadow:none; }
+  .module-card.featured small,.featured .module-arrow { color:#dce7ff; }
+  .module-icon { background:#f0f3f9;color:#6f7d94;border-radius:12px;width:42px;height:42px; }
+  .module-card strong { font-size:16px;margin-bottom:3px; }
+  .module-card small { font-size:11px; }
+  #settings { background:var(--bg); }
+  .s-head { padding:0 18px 16px; }
+  .s-head h2 { font-size:19px; }
+  .s-group { margin:0 16px 14px;border-color:#e9ebef;border-radius:14px; }
+  .s-big { padding:16px; }
+  .s-now { font-size:16px;overflow-wrap:anywhere; }
+  .s-addr { margin-top:4px;font-size:12px; }
+  .s-act { margin-top:14px; }
+  .s-pill { background:#3370ff;border-radius:8px;padding:9px 13px;font-size:12px; }
+  .s-pill.ghost { background:#f1f4f9;color:#4c596e; }
+  .s-switch.on { background:#3370ff; }
+  .s-row { padding:13px 16px;font-size:13px; }
+  .s-row .v { font-size:12px;max-width:65%; }
+  .s-row .k.danger { color:#6b7380; }
+  .s-foot { padding:4px 24px 16px;font-size:10px;color:#979da6;line-height:1.8; }
+  #page-update-status { font-size:12px;color:#7e8795;overflow-wrap:anywhere; }
+  .s-row.update-actions { gap:8px; }
+  .s-row.update-actions button { flex:1; }
+  .s-history { padding:0;background:#fff;color:#1f2329; }
+  .s-history summary { padding:14px 16px;font-size:13px; }
+  .s-history summary span { float:right;margin-right:10px;color:#8b919b;font-size:12px; }
+  .s-history .s-row:first-of-type { border-top:1px solid #eef1f4; }
 </style>
 </head>
 <body>
 <section id="home"><div class="home-wrap">
-<div class="home-eyebrow">仓 库 随 行</div>
-<h1>今天的工作，从这里开始</h1>
-<p>连接仓库，处理每一票出货。<br>电脑不在身边，也能查看手机里的清单。</p>
-<div class="home-heading">我的工作<span>按需连接 · 随时查看</span></div>
+<header class="workspace-head"><h1>工作台</h1><span>出货助手</span></header>
+<section class="master-card" aria-label="手机主库概览"><div class="master-heading"><strong>手机主库</strong><span id="home-saved">正在读取</span></div><div class="master-stats"><div><b id="home-total">—</b><span>总件数</span></div><div><b id="home-done">—</b><span>已出货</span></div><div><b id="home-left">—</b><span>待出货</span></div></div><div class="master-note" id="home-sync">打开清单查看同步状态</div></section>
 <button id="module-warehouse" class="module-card featured">
 <span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3 8 9-5 9 5v11l-9 3-9-3V8Z"/><path d="m3 8 9 4 9-4M12 12v10M7 5.8l10 4.4"/></svg></span>
-<span class="module-copy"><strong>入库与出货</strong><small>联网同步清单，离线也能查看和记录</small></span><span class="module-arrow">›</span></button>
+<span class="module-copy"><strong>入库与出货</strong><small>查看清单 · 记录出货</small></span><span class="module-arrow">›</span></button>
 <button id="module-settings" class="module-card">
 <span class="module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5M8 9h8"/></svg></span>
-<span class="module-copy"><strong>设备与连接</strong><small>管理电脑配对与连接记录</small></span><span class="module-arrow">›</span></button>
-<div class="home-note">实时业务需与电脑处于同一 Wi-Fi</div>
+<span class="module-copy"><strong>设备与连接</strong><small id="home-computer">配对电脑 · 同步与更新</small></span><span class="module-arrow">›</span></button>
 </div></section>
 <nav id="shell-nav" aria-label="模块导航"><button id="home-back" class="hide">‹ 工作台</button><span id="shell-title">入库与出货</span><button id="shell-settings">设置</button></nav>
 <iframe id="view" allow="clipboard-read; clipboard-write"></iframe>
@@ -758,11 +800,37 @@
     if (!view.src && gate.classList.contains('hide')) showHome();
   }
 
+  function pairedComputer(){return current||readJSON('shipping-shell.current',null)||loadAuto()||loadHistory().find(function(item){return item.url;});}
+  function masterSummary(){
+    return new Promise(function(resolve){
+      function finish(master){
+        var stored=readJSON(CACHE_KEY,null),rows=master&&master.rows||stored&&stored.rows||[];
+        var peer=null,entry=pairedComputer();try{peer=master&&entry&&master.peers[new URL(entry.url).origin];}catch(_){}
+        var remaining=master&&peer?(master.operations||[]).slice(peer.opCursor||0).filter(function(op){return op.originComputer!==peer.computerId;}).length:0;
+        var count=master?(peer?remaining||((peer.ackRevision||0)<master.localRevision?1:0):rows.length):null;
+        resolve({rows:rows,savedAt:master&&master.lastSaved||stored&&stored.at,lastSync:peer&&peer.lastSync,pending:count,conflicts:master&&master.conflicts&&master.conflicts.length||0});
+      }
+      if(!window.indexedDB){finish(null);return;}
+      try{
+        var request=indexedDB.open('shipping-master');
+        request.onupgradeneeded=function(){request.transaction.abort();};
+        request.onerror=function(){finish(null);};request.onblocked=function(){finish(null);};
+        request.onsuccess=function(){var database=request.result;if(!database.objectStoreNames.contains('state')){database.close();finish(null);return;}var transaction=database.transaction('state','readonly');var get=transaction.objectStore('state').get('shipping-shell.master.v1');get.onsuccess=function(){database.close();finish(get.result||null);};get.onerror=function(){database.close();finish(null);};};
+      }catch(_){finish(null);}
+    });
+  }
+  function summaryStatus(summary){return summary.conflicts?summary.conflicts+' 项冲突待核对':summary.pending===null?'打开清单查看同步状态':summary.pending?summary.pending+' 条待同步 · 连接电脑后自动重试':summary.lastSync?'上次同步 '+hm(summary.lastSync):'暂无待同步记录';}
+  function refreshHome(){
+    var paired=pairedComputer(),host=paired&&paired.host;try{if(paired&&!host)host=new URL(paired.url).hostname;}catch(_){}document.getElementById('home-computer').textContent=host?'已配对 · '+host:'配对电脑 · 同步与更新';
+    masterSummary().then(function(summary){var total=0,done=0;summary.rows.forEach(function(row){var qty=Number(row.qty)||0;total+=qty;if(row.checked)done+=qty;});document.getElementById('home-total').textContent=total;document.getElementById('home-done').textContent=done;document.getElementById('home-left').textContent=total-done;document.getElementById('home-saved').textContent=summary.savedAt?'已保存 '+hm(summary.savedAt):'暂无清单';document.getElementById('home-sync').textContent=summaryStatus(summary);});
+  }
+
   function renderSettings() {
+    current=pairedComputer()||null;
     settings.innerHTML = '';
 
     var head = mk('div', 's-head');
-    head.appendChild(mk('h2', '', '设置'));
+    head.appendChild(mk('h2', '', '连接与同步'));
     var done = mk('button', 's-done', '完成');
     done.addEventListener('click', closeSettings);
     head.appendChild(done);
@@ -771,7 +839,7 @@
     // 电脑：当前连的这台 + 换/重连
     var group = mk('div', 's-group');
     var big = mk('div', 's-big');
-    big.appendChild(mk('div', 's-k', '当前电脑'));
+    big.appendChild(mk('div', 's-k', '配对电脑'));
     big.appendChild(mk('div', 's-now', current ? current.name || '电脑' : '未连接'));
     big.appendChild(mk('div', 's-addr', current ? current.host + ' · 出货助手' : ''));
     var act = mk('div', 's-act');
@@ -794,6 +862,7 @@
     rowAuto.appendChild(mk('span', 'k', '下次自动连这台'));
     var sw = mk('button', 's-switch' + (isAuto ? ' on' : ''), '');
     sw.setAttribute('aria-label', '下次自动连这台');
+    sw.setAttribute('role','switch');sw.setAttribute('aria-checked',String(isAuto));sw.disabled=!current;
     sw.addEventListener('click', function () {
       var a = loadAuto();
       if (a && current && a.host === current.host) clearAuto();
@@ -804,33 +873,31 @@
     group.appendChild(rowAuto);
     settings.appendChild(group);
 
-    // 离线清单：手机里存的那份快照
-    if (cache && cache.rows && cache.rows.length) {
+    // 从当前手机主库读取状态，不再展示迁移前的旧勾选队列。
+    {
       var gLocal = mk('div', 's-group');
       var rLocal = mk('div', 's-row s-row-tap');
-      rLocal.appendChild(mk('span', 'k', '离线清单'));
-      rLocal.appendChild(mk('span', 'v', '截至 ' + hm(cache.at)));
+      rLocal.appendChild(mk('span', 'k', '手机主库'));
+      var localValue=mk('span','v','正在读取');rLocal.appendChild(localValue);
       rLocal.addEventListener('click', function () {
         closeSettings();
         openLocal();
       });
       gLocal.appendChild(rLocal);
-      if (pending.length) {
         var rPend = mk('div', 's-row');
-        rPend.appendChild(mk('span', 'k', '待回传勾选'));
-        rPend.appendChild(mk('span', 'v', pending.length + ' 条 · 连上电脑自动推'));
+        rPend.appendChild(mk('span', 'k', '同步状态'));
+        var pendingValue=mk('span','v','正在读取');rPend.appendChild(pendingValue);
         gLocal.appendChild(rPend);
-      }
+      masterSummary().then(function(summary){localValue.textContent=summary.rows.length+' 行 · '+summary.rows.reduce(function(sum,r){return sum+(Number(r.qty)||0);},0)+' 件';pendingValue.textContent=summaryStatus(summary);pendingValue.style.whiteSpace='normal';});
       settings.appendChild(gLocal);
     }
 
     // 连接历史：点一下直接换过去
     var hist = loadHistory();
     if (hist.length) {
-      var gHist = mk('div', 's-group');
-      var title = mk('div', 's-row');
-      title.appendChild(mk('span', 'k', '连接历史'));
-      title.appendChild(mk('span', 'v', hist.length + ' 台'));
+      var gHist = mk('details', 's-group s-history');
+      var title = mk('summary', '', '连接历史');
+      title.appendChild(mk('span', '', hist.length + ' 台'));
       gHist.appendChild(title);
       hist.slice(0, 4).forEach(function (item) {
         var r = mk('div', 's-row s-row-tap');
@@ -843,26 +910,16 @@
         });
         gHist.appendChild(r);
       });
-      settings.appendChild(gHist);
-    }
-
-    // 其他
-    var gOther = mk('div', 's-group');
-    var about = mk('div', 's-row');
-    about.appendChild(mk('span', 'k', '出货助手版本'));
-    about.appendChild(mk('span', 'v', '0.1.0'));
-    gOther.appendChild(about);
-    if (hist.length) {
       var clr = mk('div', 's-row s-row-tap');
-      clr.appendChild(mk('span', 'k danger', '清空连接记录'));
+      clr.appendChild(mk('span', 'k', '清空连接记录'));
       clr.addEventListener('click', function () {
         if (!confirm('清空连接历史？')) return;
         try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
         renderSettings();
       });
-      gOther.appendChild(clr);
+      gHist.appendChild(clr);
+      settings.appendChild(gHist);
     }
-    settings.appendChild(gOther);
     if (window.shippingUpdates) {
       var updates = mk('div', 's-group');
       var updateRow = mk('div', 's-row');
@@ -873,7 +930,7 @@
       updateStatus.id = 'page-update-status';
       updateStatus.textContent = window.shippingUpdates.status();
       updates.appendChild(updateStatus);
-      var actions = mk('div', 's-row');
+      var actions = mk('div', 's-row update-actions');
       var checkUpdate = mk('button', 's-pill', '检查页面更新');
       checkUpdate.addEventListener('click', function () {
         var entry = current || readJSON('shipping-shell.current', null) || loadAuto() || loadHistory().find(function (x) { return x.url; });
@@ -882,15 +939,12 @@
       var applyUpdate = mk('button', 's-pill ghost', '应用更新');
       applyUpdate.id = 'apply-page-update';
       applyUpdate.disabled = !window.shippingUpdates.hasPending();
+      applyUpdate.classList.toggle('hide',!window.shippingUpdates.hasPending());
       applyUpdate.addEventListener('click', function () { window.shippingUpdates.applyPending(); });
-      var restore = mk('button', 's-pill ghost', '恢复内置版');
-      restore.addEventListener('click', function () {
-        if (confirm('恢复内置页面并重新打开？配对、清单和待同步记录都会保留。')) window.shippingUpdates.restoreBuiltin();
-      });
-      actions.appendChild(checkUpdate); actions.appendChild(applyUpdate); actions.appendChild(restore); updates.appendChild(actions);
+      actions.appendChild(checkUpdate); actions.appendChild(applyUpdate); updates.appendChild(actions);
       settings.appendChild(updates);
     }
-    settings.appendChild(mk('div', 's-foot', '清单保存在手机，出货操作连接后同步'));
+    settings.appendChild(mk('div', 's-foot', '出货助手 0.1.0 · 记录自动保存在手机'));
   }
 
   function openSettings() {
@@ -943,6 +997,7 @@
     homeBack.classList.add('hide');
     document.body.classList.remove('module-open');
     home.classList.remove('hide');
+    refreshHome();
   }
   function openShipping() {
     cache = readJSON(CACHE_KEY, null);
@@ -974,7 +1029,7 @@
       var status = document.getElementById('page-update-status');
       if (status) status.textContent = window.shippingUpdates.status();
       var apply = document.getElementById('apply-page-update');
-      if (apply) apply.disabled = !window.shippingUpdates.hasPending();
+      if (apply) {apply.disabled = !window.shippingUpdates.hasPending();apply.classList.toggle('hide',!window.shippingUpdates.hasPending());}
     });
     window.shippingUpdates.ready();
     var entry = readJSON('shipping-shell.current', null) || loadAuto() || loadHistory().find(function (x) { return x.url; });

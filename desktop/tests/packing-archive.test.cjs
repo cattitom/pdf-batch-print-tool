@@ -59,4 +59,25 @@ test('原表已有其他单号不覆盖，恢复单号尊重最新撤回状态',
   const result = withArchiveRows([row({ waybill: '' })], [row({ checked: true })], checks);
   assert.equal(result.length, 1);
   assert.equal(result[0].checked, false);
+});test('原表行号整体偏移后，存档里的同一件货不再重复显示', () => {
+  const live = row({ seq: 121, sourceRow: 121, qty: 35, checked: true });
+  const archived = [121, 122, 124, 134, 174].map((seq) => row({ seq, qty: 35, checked: true }));
+  const result = withArchiveRows([live], archived);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].qty, 35);
+  assert.ok(!result[0].issues.includes(HISTORY_ISSUE));
+});
+test('拆批 20+15 合成 35 之后，存档里的两行不再补回来', () => {
+  const live = row({ qty: 35 });
+  const archived = [row({ qty: 20 }), row({ qty: 15 })];
+  const result = withArchiveRows([live], archived);
+  assert.equal(result.length, 1);
+  assert.equal(result.reduce((sum, r) => sum + r.qty, 0), 35);
+});
+test('原表只剩一部分货时，存档里的其余明细仍然补出来', () => {
+  const live = row({ name: '商品A', qty: 20 });
+  const archived = [row({ name: '商品A', qty: 20 }), row({ name: '商品B', inbound: 'IB002', qty: 4 })];
+  const result = withArchiveRows([live], archived);
+  assert.equal(result.length, 2);
+  assert.equal(result.reduce((sum, r) => sum + r.qty, 0), 24);
 });

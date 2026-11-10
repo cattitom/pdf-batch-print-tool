@@ -3,7 +3,7 @@
 //! 仅使用 PaddleOCR（MNN），模型缺失或识别失败时明确报错。
 //! 识别产出「词 + 坐标」，按 y 聚成行，
 //! 按 x 的空白槽切列，再按内容认角色（商品名 / 数量 / 标记 / 目的地 / 入库号），
-//! 最后交给 [`pdfimpose_core::parse_grid`] 做校验、合并单元格展开和去重。
+//! 最后交给 [`pdfimpose_core::parse_grid`] 做校验、合并单元格展开和疑似重复提示。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};

@@ -15,6 +15,7 @@ import type { ImposeFileDto } from "./bindings/ImposeFileDto";
 import type { ImposeOptsDto } from "./bindings/ImposeOptsDto";
 import type { ImposeResultDto } from "./bindings/ImposeResultDto";
 import type { PdfInfo } from "./bindings/PdfInfo";
+import type { ArchivedTicketDto } from "./bindings/ArchivedTicketDto";
 import type { PackingCheckDto } from "./bindings/PackingCheckDto";
 import type { PrintHistoryEntry } from "./bindings/PrintHistoryEntry";
 import type { LabelSku } from "./bindings/LabelSku";
@@ -166,6 +167,18 @@ export function errorHint(e: unknown): string {
 
 /** 手机端一行：只带勾选要用的字段。 */
 export interface MobileRowDto {
+  syncId?: string;
+  sourceIdentity?: string;
+  sourceRow?: number;
+  cloudAuthoritative?: boolean;
+  quantityGroup?: string;
+  masterRevision?: number;
+  manualFields?: string[];
+  knownFields?: string[];
+  destination?: string;
+  seq?: number;
+  qtyRaw?: string;
+  cargo?: Record<string,string>;
   sourceId?: string;
   recordId?: string;
   datasetId?: string;
@@ -174,6 +187,8 @@ export interface MobileRowDto {
   inbound: string;
   name: string;
   customer: string;
+  arrival?: string;
+  remarks?: string;
   qty: number;
   checked: boolean;
   issues: string[];
@@ -269,6 +284,10 @@ export const api = {
   mobileSetCheck: (waybill: string, inbound: string, name: string, checked: boolean, expected?: MobileRowDto[]) =>
     invoke<void>("mobile_set_check", { waybill, inbound, name, checked, expected: expected ?? null }),
   mobileRows: () => invoke<MobileRowDto[]>("mobile_rows"),
+  saveMobileMasterEdit: (before:MobileRowDto,fields:Record<string,unknown>)=>invoke<MobileRowDto>("save_mobile_master_edit",{before,fields}),
+  takeMobileCloudRefresh: () => invoke<number | null>("take_mobile_cloud_refresh"),
+  mobileLastActivity: () => invoke<number>("mobile_last_activity"),
+  finishMobileCloudRefresh: (id: number, error?: string) => invoke<void>("finish_mobile_cloud_refresh", { id, error: error ?? null }),
   mobileResetToken: () => invoke<MobileInfoDto>("mobile_reset_token"),
   mobileStop: () => invoke<void>("mobile_stop"),
   mobileInfo: () => invoke<MobileInfoDto | null>("mobile_info"),
@@ -314,7 +333,13 @@ export const api = {
   cachePackingCargo: (rows: PackingItemDto[], source: string) => invoke<void>("cache_packing_cargo", { rows, source }),
   packingCargo: (row: PackingItemDto) => invoke<{ cargo: Record<string, string>; source: string } | null>("packing_cargo", { row }),
   allSettings: () => invoke<Record<string, string>>("all_settings"),
+  configFilePath: () => invoke<string>("config_file_path"),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+
+  // 出货档案：正规化存档表（archive_ticket / archive_item），不再读写 settings JSON
+  ledgerMode: () => invoke<string>("ledger_mode"),
+  ledgerArchiveTickets: () => invoke<ArchivedTicketDto[]>("ledger_archive_tickets"),
+  ledgerArchiveSave: (rows: PackingItemDto[]) => invoke<void>("ledger_archive_save", { rows }),
 
   // 出货清单：已录勾选（按 单号 + 入库号 + 商品名 认行）
   setPackingCheck: (waybill: string, inbound: string, name: string, checked: boolean) =>

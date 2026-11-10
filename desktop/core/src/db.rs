@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 mod cargo;
+mod ledger;
+mod mobile_master;
 pub use cargo::PackingCargoRecord;
+pub use ledger::LedgerState;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS print_history (
@@ -137,6 +140,16 @@ impl Db {
             log::error!("数据库初始化失败：step=open path={} error={e:?}", path.display());
             e
         })?;
+        // 结构升级前先把旧库整体备份一份，迁移出错可原样回退。
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+        if version > 0 && version < SCHEMA_VERSION {
+            let backup = path.with_extension(format!("v{version}.bak"));
+            if let Err(e) = conn.execute("VACUUM INTO ?1", [backup.to_string_lossy().to_string()]) {
+                log::warn!("数据库升级前备份失败（继续升级）：{e:?}");
+            } else {
+                log::info!("数据库升级前已备份：{}", backup.display());
+            }
+        }
         log::info!("数据库连接：readonly={:?}", conn.is_readonly("main"));
         Self::init(conn)
     }
@@ -183,6 +196,13 @@ impl Db {
             tx.execute_batch(cargo::SCHEMA)?;
             tx.pragma_update(None, "user_version", 3)?;
             tx.commit()?;
+        }
+        if version < 4 {
+            self.conn.execute_batch(ledger::SCHEMA)?;
+            // 先导入再抬版本号：导入中途失败时版本仍是 3，下次启动会整体重试；
+            // 旧 settings 键只在导入成功后才改名，重试不会丢数据。
+            self.migrate_ledger_json()?;
+            self.conn.pragma_update(None, "user_version", 4)?;
         }
         Ok(())
     }

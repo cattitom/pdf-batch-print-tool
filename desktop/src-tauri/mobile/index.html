@@ -17,15 +17,23 @@
         <header class="head">
           <div class="head-top">
             <div>
-              <h1>出货票</h1>
+              <h1>出货清单</h1>
               <p id="sub">连接中…</p>
             </div>
-            <button class="icon-btn" id="refresh" aria-label="刷新">
+            <button class="icon-btn cloud-refresh" id="refresh" aria-label="刷新云表格" title="通知电脑检查云表格并获取最新清单">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M20 12a8 8 0 1 1-2.3-5.6" stroke-linecap="round" />
                 <path d="M20 4v4h-4" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
+              <span>刷新云表格</span>
             </button>
+          </div>
+
+          <div class="mobile-toolbar">
+            <div class="view-switch" id="layout-switch" aria-label="清单视图">
+              <button data-layout="board" class="on">按票</button><button data-layout="table">全部明细</button>
+            </div>
+            <button class="export-entry" id="master-sync-open">同步详情</button><button class="export-entry" id="export-open">电脑同步</button>
           </div>
 
           <div class="stats">
@@ -43,10 +51,10 @@
           </label>
 
           <div class="seg" id="seg">
-            <button data-f="all" class="on">全部</button>
+            <button data-f="all" class="on">全部记录</button>
+            <button data-f="todo">待出货</button>
+            <button data-f="done">已出货</button>
             <button data-f="task">任务</button>
-            <button data-f="todo">未完成</button>
-            <button data-f="done">已完成</button>
           </div>
         </header>
 
@@ -66,6 +74,7 @@
             <div class="doc-sub" id="docSub">—</div>
           </div>
           <span class="tag" id="docTag">—</span>
+          <button class="export-entry" id="doc-export">同步 / 导出</button>
         </div>
 
         <div class="doc-head">
@@ -98,7 +107,27 @@
         </div>
       </section>
 
-      <div class="toast" id="toast" role="status"></div>
+      <section class="export-overlay hidden" id="export-panel" role="dialog" aria-modal="true" aria-labelledby="export-title">
+        <div class="export-card">
+          <div class="export-heading"><h2 id="export-title">电脑同步与备用导出</h2><button id="export-close" class="export-entry">关闭</button></div>
+          <p id="export-sync-info" role="status" aria-live="polite"></p>
+          <button class="btn-primary" id="export-sync">同步到当前电脑</button>
+          <label for="export-scope">导出范围</label>
+          <select id="export-scope">
+            <option value="done">已出货明细</option>
+            <option value="all">全部清单</option>
+            <option value="ticket">当前票全部明细</option>
+          </select>
+          <p id="export-summary"></p>
+          <textarea id="export-text" readonly aria-label="导出文本" spellcheck="false"></textarea>
+          <p id="export-hint">复制后可通过微信发到电脑，再粘贴给助手核对记录。导出不会修改出货状态。</p>
+          <button class="export-entry" id="export-copy">备用：复制全部文本</button>
+        </div>
+      </section>
+      <section class="export-overlay hidden" id="row-copy-panel" role="dialog" aria-modal="true" aria-label="复制当前行"><div class="export-card"><div class="export-heading"><h2>复制当前行</h2><button id="row-copy-close">关闭</button></div><textarea id="row-copy-text" readonly aria-label="当前行复制内容"></textarea><p>自动复制未成功时，请长按文本复制。</p></div></section>
+<section class="export-overlay hidden" id="row-edit-panel" role="dialog" aria-modal="true" aria-label="编辑明细"><div class="export-card"><div class="export-heading"><h2>记录单号</h2><button id="row-edit-close">取消</button></div><label>客户<input id="row-edit-customer" /></label><label>入库号<input id="row-edit-inbound" /></label><label>单号<input id="row-edit-waybill" /></label><label>特殊标注<select id="row-edit-special"><option value="">普通出货</option><option value="亚马逊">亚马逊</option><option value="发深圳">发深圳</option></select></label><p id="row-edit-error"></p><p>货物资料以云表为准；单号和出货状态保存在本地出货台账，手机与电脑双向同步，不修改云文档。</p><button id="row-edit-save" class="btn-primary">保存修改</button></div></section>
+<section class="export-overlay hidden" id="master-sync-panel" role="dialog" aria-modal="true" aria-label="出货台账同步"><div class="export-card"><div class="export-heading"><h2>出货台账同步</h2><button id="master-sync-close">关闭</button></div><p id="master-sync-info"></p><button id="master-sync-now" class="btn-primary">同步完整出货台账</button><div id="master-conflicts"></div></div></section>
+<div class="toast" id="toast" role="status"></div>
     </div>
     <script src="/m.js"></script>
   </body>

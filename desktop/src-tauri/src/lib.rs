@@ -1,6 +1,8 @@
 pub mod commands;
+mod config_file;
 mod logging;
 mod mobile;
+mod mobile_master;
 mod mobile_update;
 mod wechat;
 // 示例 examples/label_ocr.rs 直接调 OCR 跑真图验证，所以这里 pub
@@ -46,7 +48,11 @@ pub fn run() {
             commands::generate_product_labels,
             commands::preview_product_label,
             commands::all_settings,
+            commands::config_file_path,
             commands::set_setting,
+            commands::ledger_mode,
+            commands::ledger_archive_tickets,
+            commands::ledger_archive_save,
             commands::set_packing_check,
             commands::set_packing_checks,
             commands::list_packing_checks,
@@ -69,6 +75,10 @@ pub fn run() {
             commands::mobile_sync,
             commands::mobile_set_check,
             commands::mobile_rows,
+            commands::save_mobile_master_edit,
+            commands::take_mobile_cloud_refresh,
+            commands::mobile_last_activity,
+            commands::finish_mobile_cloud_refresh,
             commands::mobile_stop,
             commands::mobile_info,
             commands::mobile_allow_firewall,

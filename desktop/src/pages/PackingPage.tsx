@@ -1,4 +1,8 @@
+import { isSharedQuantity, quantityText, quantityGroups } from "./packing/quantityGroups";
 import { PackingRowDetails, businessHints } from "./packing/PackingRowDetails";
+import { applyMasterOverrides } from "./packing/masterRows";
+import { hasSpecialShipment, specialLabel, specialIssue, isSpecialLabel, suggestedSpecialLabel } from "./packing/specialShipments";
+import { applyCustomerCorrections, CUSTOMER_CORRECTIONS_KEY } from "./packing/customerCorrections";
 import { usePackingArchive } from "./packing/usePackingArchive";
 import { HISTORY_ISSUE, ARCHIVED_WAYBILL_ISSUE } from "./packing/archiveRows";
 import { PackingSaveStatus } from "./packing/PackingSaveStatus";
@@ -124,7 +128,6 @@ const KEY_PINNED = "packing_pinned";
 /** 本地手改过的单号（JSON：`入库号|商品名` → 单号）。原表没写单号的行，改完能记住，不写回原表。 */
 const KEY_WAYBILL_PATCH = "packing_waybill_patch";
 const KEY_SPECIAL = "packing_special_shipments";
-const SPECIAL_AMAZON = "special_amazon";
 /** 本次要出货的货：从截图里认出来的入库号（JSON 数组）。手机端按它只显示这批。 */
 const KEY_TASKS = "packing_task_inbounds";
 /** 任务号：按单号分组的 `[{ id: "T1", waybill, rows, boxes }]`，手机端按它认领。 */
@@ -184,7 +187,7 @@ function parseWaybillPatch(raw?: string): Record<string, string> {
 }
 
 /** 既没入库号也没单号：客户还没给箱唛，货还不能发——灰着、不让标已出，但照常算未出/进手机/进导出。 */
-const rowBlocked = (r: PackingItemDto) => !r.issues.includes(SPECIAL_AMAZON) && (!r.inbound.trim() || !r.waybill.trim());
+const rowBlocked = (r: PackingItemDto) => !hasSpecialShipment(r) && (!r.inbound.trim() || !r.waybill.trim());
 
 /** 一行货物的稳定指纹：同一票、同入库号、同商品名，重新解析后还能认回来。 */
 
@@ -207,7 +210,7 @@ function toMarkdown(rows: PackingItemDto[]): string {
     for (const row of list) {
       const box = row.checked ? "x" : " ";
       out.push(
-        `- [${box}] ${row.name} | 客户：${row.customer || "-"} | ${row.qty} 箱 | 入库号：${row.inbound}`
+        `- [${box}] ${row.name} | 客户：${row.customer || "-"} | ${quantityText(row)} | 入库号：${row.inbound}`
       );
     }
     out.push("");
@@ -229,6 +232,7 @@ export default function PackingPage({
   const [sheet, setSheet] = useState<PackingSheetDto | null>(null);
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const detailRow = detailKey ? rows.find((row) => rowKey(row) === detailKey) : undefined;
+  const sharedQuantityGroups = useMemo(() => quantityGroups(rows), [rows]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mobileVersionsRef = useRef<MobileRowDto[]>([]);
@@ -248,6 +252,7 @@ export default function PackingPage({
 
   /** 出货状态记忆：指纹 → 是否已出。启动时从数据库读一次，点一下逐条写回。 */
   const checkedRef = useRef<Record<string, boolean>>({});
+  const masterEditQueueRef=useRef<Promise<unknown>>(Promise.resolve());
   const externalFileRef = useRef(false);
   /** 本地手改的单号（`入库号|商品名` → 单号），解析完铺表时套上去。 */
   const waybillPatchRef = useRef<Record<string, string>>({});
@@ -267,7 +272,7 @@ export default function PackingPage({
   /** 顶部搜索词（模糊匹配商品/客户/入库号/单号） */
   const [q, setQ] = useState("");
   /** 勾了「有更新自动换表」就静默应用，否则只亮提示 */
-  const [autoSync, setAutoSync] = useState(false);
+  const [autoSync, setAutoSync] = useState(true);
   /** 右下角浮条提示（云端同步等，2.6s 后自动消失） */
   const [scanHint, setScanHint] = useState<string | null>(null);
   /** 只看有问题的行 */
@@ -287,6 +292,7 @@ export default function PackingPage({
   const { savingChecks, checkFailure, savingChecksRef, saveChecks, applyMobileSnapshot, discardFailure } = usePackingChecks({
     rowsRef, checkedRef, mobileVersionsRef, sheetGenerationRef, setRows, setSavedPath, setError,
     mobilePort: mobileInfo?.port,
+    onMasterSnapshot: (items) => setSheet(previous => previous || {items,destination:"",waybill:"",totalQty:items.reduce((n,r)=>n+r.qty,0),expectedQty:null,mapping:"手机主库同步",warnings:[],engine:""}),
   });
   /** 钉住的行指纹（表格上方的钉住条） */
   const [pinned, setPinned] = useState<string[]>([]);
@@ -492,30 +498,12 @@ export default function PackingPage({
   /** 已勾选行的件数合计（全部卡片用）。 */
   const doneQty = rows.filter((r) => r.checked).reduce((n, r) => n + r.qty, 0);
 
-  const toggleWaybill = (key: string) =>
-    setPickedWaybills((prev) =>
-      prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]
-    );
-
-  /** 上次点过的单号（Shift 连选用） */
-  const lastPickRef = useRef<string | null>(null);
-
-  /** 点单号 chip：普通点切换，Shift 点从上一次到这一次整段加进来。 */
-  const pickWaybill = (key: string, shift: boolean) => {
-    if (shift && lastPickRef.current) {
-      const keys = progress.map((p) => p.key);
-      const a = keys.indexOf(lastPickRef.current);
-      const b = keys.indexOf(key);
-      if (a >= 0 && b >= 0) {
-        const range = keys.slice(Math.min(a, b), Math.max(a, b) + 1);
-        setPickedWaybills((prev) => [...new Set([...prev, ...range])]);
-        lastPickRef.current = key;
-        return;
-      }
-    }
-    lastPickRef.current = key;
-    toggleWaybill(key);
-  };
+  /**
+   * 点单号 chip：票只能单选——一次只看一票，再点同一票回到全部。
+   * （出货是按票出的，同时看几票反而容易点错行。）
+   */
+  const pickWaybill = (key: string) =>
+    setPickedWaybills((prev) => (prev.length === 1 && prev[0] === key ? [] : [key]));
 
   useEffect(() => {
     if (!scanHint) return;
@@ -645,7 +633,13 @@ export default function PackingPage({
       width: 64,
       align: "center" as const,
       render: (v: number, r: TableRow) =>
-        isFold(r) ? null : (
+        isFold(r) ? null : r.quantityGroup ? (
+          <Tooltip title={`原表 ${r.quantityGroup} 共 ${r.qtyRaw} 箱，只计一次；点击查看来源`}>
+            <Button type="link" size="small" onClick={() => setDetailKey(rowKey(r))}>
+              {isSharedQuantity(r) ? "合箱" : v}
+            </Button>
+          </Tooltip>
+        ) : (
           <InputNumber
             variant="borderless"
             min={0}
@@ -703,11 +697,12 @@ export default function PackingPage({
       width: 175,
       render: (_: unknown, r: TableRow) => {
         if (isFold(r)) return null;
-        const special = r.issues.includes(SPECIAL_AMAZON);
-        if (special || (r.customer.trim() === "果粒橙" && rowBlocked(r))) return (
-          <Tooltip title={special ? "亚马逊出货，单独按亚马逊单号分组" : "将这一行归入亚马逊单号"}>
+        const label = specialLabel(r) || suggestedSpecialLabel(r);
+        const special = hasSpecialShipment(r);
+        if (label && (special || rowBlocked(r))) return (
+          <Tooltip title={special ? `${label}特殊出货，允许免单号，单独分组` : `将这一行归入${label}分组，允许免单号出货`}>
             <Button size="small" type="text" style={special ? { color: "#a65c00", background: "#fff4e5" } : undefined} disabled={savingSpecial || (r.checked && special)} onClick={() => { if (!special) void setAmazon(r.__idx, true); }}>
-              {special ? "亚马逊" : "标记亚马逊"}
+              {special ? label : `标记${label}`}
             </Button>
           </Tooltip>
         );
@@ -739,12 +734,12 @@ export default function PackingPage({
       width: 190,
       render: (v: string, r: TableRow) =>
         isFold(r) ? null : (
-          <Space size={4} className={v.trim() ? "inbound-cell present" : r.issues.includes(SPECIAL_AMAZON) ? "inbound-cell" : "inbound-cell missing"}>
+          <Space size={4} className={v.trim() ? "inbound-cell present" : hasSpecialShipment(r) ? "inbound-cell" : "inbound-cell missing"}>
             {v.trim() && <span className="inbound-dot" aria-label="已有入库号" />}
             <Input
               variant="borderless"
               value={v}
-              placeholder={r.issues.includes(SPECIAL_AMAZON) ? "—" : "待补入库号"}
+              placeholder={hasSpecialShipment(r) ? "—" : "待补入库号"}
               aria-label="入库号"
               style={monoStyle}
               onChange={(e) => patch(r.__idx, { inbound: e.target.value })}
@@ -825,22 +820,38 @@ export default function PackingPage({
     externalFileRef.current = external;
     sheetGenerationRef.current = crypto.randomUUID();
     mobileVersionsRef.current = [];
+    const generation = sheetGenerationRef.current;
+    let settings: Record<string, string>;
+    try { settings = await api.allSettings(); }
+    catch (e) { setError("读取客户修订失败：" + errorText(e)); return false; }
+    if (generation !== sheetGenerationRef.current) return false;
+    waybillPatchRef.current = parseWaybillPatch(settings[KEY_WAYBILL_PATCH]);
+    specialRef.current = parseWaybillPatch(settings[KEY_SPECIAL]);
+    let ledgerMode = false;
+    // 台账模式存在库里的 ledger_meta，不再从 settings 的旧 JSON 键读。
+    try { ledgerMode = (await api.ledgerMode()) === "shipment-ledger"; } catch {}
+    s = { ...s, items: applyMasterOverrides(external ? applyCustomerCorrections(s.items, settings[CUSTOMER_CORRECTIONS_KEY]) : s.items,settings.packing_master_overrides_v1, true, ledgerMode) };
     // 原表里「产品名称 → 入库号」刷红字的就是已出货：这是原表作者亲手标的，比本地点出来的可信，
     // 所以红字的行直接用解析结果（本地旧记录不覆盖它）；其余行再把之前勾过的状态按指纹认回来。
-    const generation = sheetGenerationRef.current;
     const nextSpecial = { ...specialRef.current };
     const movedWaybills = new Set<string>();
+    const sourceKeyCounts = new Map<string, number>();
+    for (const item of s.items) {const key = waybillPatchKey(item);sourceKeyCounts.set(key,(sourceKeyCounts.get(key)||0)+1);}
     const liveItems = s.items.map((it) => {
       // 原表没写单号的行，这里先套上本地手改的那一个（测试 / 客户事后补单号都用得上）
       const local = waybillPatchRef.current[waybillPatchKey(it)];
-      let row = local ? { ...it, waybill: local } : it;
-      if (specialRef.current[rowKey(row)] === "亚马逊") row = { ...row, issues: [...row.issues.filter((c) => c !== SPECIAL_AMAZON), SPECIAL_AMAZON] };
+      let row = local && !it.waybill.trim() && sourceKeyCounts.get(waybillPatchKey(it)) === 1 ? { ...it, waybill: local } : it;
+      const savedSpecial = specialRef.current[rowKey(row)];
+      if (isSpecialLabel(savedSpecial)) row = { ...row, issues: [...row.issues.filter((c) => c !== "special_amazon" && c !== "special_shenzhen"), specialIssue(savedSpecial)] };
       const original = row;
-      if (row.customer.trim() === "果粒橙" && row.issues.includes(SPECIAL_AMAZON)) {
-        if (row.waybill !== "亚马逊") movedWaybills.add(row.waybill.trim() || "__none__");
-        row = { ...row, waybill: "亚马逊" };
-        nextSpecial[rowKey(row)] = "亚马逊";
+      const label = specialLabel(row);
+      if (label) {
+        if (row.waybill !== label) movedWaybills.add(row.waybill.trim() || "__none__");
+        row = { ...row, waybill: label };
+        nextSpecial[rowKey(row)] = label;
       }
+      if (!external && !ledgerMode) return row; // 云表资料只读；台账模式单独恢复本地出货状态。
+      if (row.manualFields?.includes("checked")) return row;
       if (row.checked) return row;
       // 单号被本地改过时，两种指纹都认：改号之前点过的「已出」不该丢
       const saved =
@@ -852,9 +863,9 @@ export default function PackingPage({
       try {
         await api.setSetting(KEY_SPECIAL, JSON.stringify(nextSpecial));
         specialRef.current = nextSpecial;
-      } catch (e) { setError("亚马逊分组保存失败：" + errorText(e)); return; }
+      } catch (e) { setError("特殊出货分组保存失败：" + errorText(e)); return false; }
     }
-    if (generation !== sheetGenerationRef.current) return;
+    if (generation !== sheetGenerationRef.current) return false;
     const items = mergeArchiveRows(liveItems, checkedRef.current);
     setDetailKey(null);
     setSheet(s);
@@ -862,21 +873,29 @@ export default function PackingPage({
     setRows(items);
     setSelected([]);
     setOnlyIssues(false);
-    // 上次筛的单号如果这份表里没有，自动去掉，免得一打开就是空表
+    // 上次筛的单号如果这份表里没有，自动去掉，免得一打开就是空表（单选，只留一票）
     const present = new Set(items.map((it) => it.waybill.trim() || "__none__"));
     setPickedWaybills((prev) => {
-      const kept = prev.filter((k) => present.has(k));
-      if (prev.some((k) => movedWaybills.has(k)) && present.has("亚马逊") && !kept.includes("亚马逊")) kept.push("亚马逊");
+      if (prev.some((k) => movedWaybills.has(k))) {
+        const label = ["亚马逊", "发深圳"].find((l) => present.has(l));
+        if (label) return [label];
+      }
+      const kept = prev.filter((k) => present.has(k)).slice(0, 1);
       return kept.length === prev.length && kept.every((key, index) => key === prev[index]) ? prev : kept;
     });
+    return true;
   };
 
   // 开发模式热更新时，已加载的旧特殊记录也立即归入亚马逊。
   useEffect(() => {
-    if (sheet && rows.some((r) => r.customer.trim() === "果粒橙" && r.issues.includes(SPECIAL_AMAZON) && r.waybill !== "亚马逊")) {
+    if (sheet && rows.some((r) => specialLabel(r) && r.waybill !== specialLabel(r))) {
       void applySheet({ ...sheet, items: rowsRef.current }, externalFileRef.current);
-    } else if (rows.some((r) => r.waybill === "亚马逊" && r.issues.includes(SPECIAL_AMAZON)) && !rows.some((r) => !r.waybill.trim())) {
-      setPickedWaybills((prev) => prev.includes("__none__") ? [...new Set([...prev.filter((key) => key !== "__none__"), "亚马逊"])] : prev);
+    } else if (rows.some(hasSpecialShipment) && !rows.some((r) => !r.waybill.trim())) {
+      setPickedWaybills((prev) => {
+        if (!prev.includes("__none__")) return prev;
+        const label = rows.find(hasSpecialShipment)?.waybill.trim();
+        return label ? [label] : prev;
+      });
     }
     // 仅在行身份变化时迁移，不重新读取原表。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -894,11 +913,16 @@ export default function PackingPage({
     sync,
   } = useCloudSync({
     autoSync,
-    onApplied: (sheet) => {
-      applySheet(sheet);
+    mobileActive: async () => (Date.now() / 1000 - await api.mobileLastActivity()) < 30,
+    canApply: () => !busy && !savingChecksRef.current && !checkFailure && !savingSpecial && !document.activeElement?.closest(".ant-table input, .ant-table textarea"),
+    onApplied: async (sheet) => {
+      const checks = await api.listPackingChecks();
+      checkedRef.current = Object.fromEntries(checks.map(c => [rowKey(c), c.checked]));
+      if (!await applySheet(sheet)) return false;
       setFromOcr(false);
       setError(null);
       setSavedPath(null);
+      return true;
     },
     onHint: setScanHint,
     onError: (e) => setError(errorText(e) + errorHint(e)),
@@ -925,7 +949,7 @@ export default function PackingPage({
     try {
       setBusy(true);
       const s = isImage ? await api.parsePackingImage(path) : await api.parsePackingFile(path);
-      applySheet(s, true);
+      if (!await applySheet(s, true)) return;
       setFromOcr(isImage);
       setError(null);
       setSavedPath(null);
@@ -955,7 +979,7 @@ export default function PackingPage({
       specialRef.current = parseWaybillPatch(s[KEY_SPECIAL]);
       setTaskCodes(parseCodeList(s[KEY_TASKS]));
       setShipTasks(parseTasks(s[KEY_TASK_META]));
-      setAutoSync(s[KEY_KDOCS_AUTO_SYNC] === "1");
+      setAutoSync(s[KEY_KDOCS_AUTO_SYNC] !== "0");
       // 上面那个「启动时打开上次文件」要是会打开文件，就别用云缓存抢它的位置
       const localFile = s[KEY_AUTO_OPEN] !== "0" && !!s[KEY_LAST_FILE];
       if (localFile) externalFileRef.current = true;
@@ -979,7 +1003,7 @@ export default function PackingPage({
             ? await api.parsePackingXls(lastPath, wantSheet || null)
             : await api.parsePackingFile(lastPath);
           if (!alive) return;
-          applySheet(sheet);
+          if (!await applySheet(sheet)) return;
           setFromOcr(false);
           restored = true;
           setCloudSheet(cache.sheet || null);
@@ -1000,7 +1024,7 @@ export default function PackingPage({
         }
       }
       if (!alive) return;
-      void sync(undefined, { background: true, applyAnyway: !restored });
+      if (!restored || s[KEY_KDOCS_AUTO_SYNC] !== "0") void sync(undefined, { background: true, applyAnyway: !restored });
     })();
     return () => {
       alive = false;
@@ -1044,7 +1068,7 @@ export default function PackingPage({
   const refreshLast = async () => {
     if (busy || syncing || !sheet) return;
     if (!externalFileRef.current) {
-      await sync(cloudSheet ?? undefined, { applyAnyway: true });
+      await sync(cloudSheet ?? undefined, { applyAnyway: true, refreshRemote: true });
       return;
     }
     let last = "";
@@ -1097,11 +1121,12 @@ export default function PackingPage({
       const on = saved[KEY_AUTO_OPEN] !== "0";
       setAutoOpen(on);
 
-      // 恢复上次筛的单号（解析完会自动滤掉这份表里没有的）
+      // 恢复上次筛的单号（单选，只取最后一个；解析完会自动滤掉这份表里没有的）
       try {
         const arr = JSON.parse(saved[KEY_PICKED] ?? "[]");
         if (Array.isArray(arr)) {
-          setPickedWaybills(arr.filter((x): x is string => typeof x === "string"));
+          const list = arr.filter((x): x is string => typeof x === "string");
+          if (list.length) setPickedWaybills([list[list.length - 1]]);
         }
       } catch {
         // 存坏了就当没筛过
@@ -1150,7 +1175,7 @@ export default function PackingPage({
         setBusy(true);
         const s = isImage ? await api.parsePackingImage(path) : await api.parsePackingFile(path);
         if (cancelled) return;
-        applySheet(s, true);
+        if (!await applySheet(s, true)) return;
         setFromOcr(isImage);
         setError(null);
         setSavedPath(null);
@@ -1176,20 +1201,34 @@ export default function PackingPage({
       void saveChecks([{ ...row, ...p }]);
       return;
     }
-    const next = rowsRef.current.map((r, j) => (j === i ? { ...r, ...p } : r));
+    const before=mobilePayload().find(r=>row.syncId?r.syncId===row.syncId:rowKey(r)===rowKey(row));
+    const next = rowsRef.current.map((r, j) => (j === i ? { ...r, ...p, manualFields:[...new Set([...(r.manualFields||[]),...Object.keys(p)])] } : r));
     rowsRef.current = next;
     setRows(next);
     setSavedPath(null);
+    if(before) masterEditQueueRef.current=masterEditQueueRef.current.catch(()=>{}).then(async()=>{
+      try{
+        const saved=await api.saveMobileMasterEdit(before,p);
+        const updated=rowsRef.current.map(r=>(r.syncId&&r.syncId===saved.syncId)||(!r.syncId&&r.inbound===(p.inbound??row.inbound)&&r.name===(p.name??row.name))?{...r,syncId:saved.syncId}:r);
+        rowsRef.current=updated;setRows(updated);
+      }catch(error){
+        const reverted=rowsRef.current.map(r=>{
+          if(row.syncId?r.syncId!==row.syncId:r.inbound!==(p.inbound??row.inbound)||r.name!==(p.name??row.name))return r;
+          const safe={...r};for(const field of Object.keys(p) as (keyof PackingItemDto)[])if(JSON.stringify(r[field])===JSON.stringify(p[field]))(safe as unknown as Record<string,unknown>)[field]=row[field];return safe;
+        });rowsRef.current=reverted;setRows(reverted);setError('明细修改未保存：'+errorText(error));
+      }
+    });
   };
 
   const setAmazon = async (i: number, enabled: boolean) => {
     const row = rowsRef.current[i];
     if (!row || savingSpecial || (row.checked && !enabled)) return;
-    if (enabled && row.customer.trim() !== "果粒橙") return;
+    const label = specialLabel(row) || suggestedSpecialLabel(row);
+    if (!label) return;
     const source = sheetGenerationRef.current;
     const key = rowKey(row);
     const next = { ...specialRef.current };
-    if (enabled) { next[key] = "亚马逊"; next[rowKey({ ...row, waybill: "亚马逊" })] = "亚马逊"; }
+    if (enabled) { next[key] = label; next[rowKey({ ...row, waybill: label })] = label; }
     else delete next[key];
     setSavingSpecial(true);
     try {
@@ -1197,12 +1236,12 @@ export default function PackingPage({
       specialRef.current = next;
       if (source === sheetGenerationRef.current) {
         const updated = rowsRef.current.map((r) => rowKey(r) === key ? {
-          ...r, waybill: enabled ? "亚马逊" : r.waybill, issues: [...r.issues.filter((c) => c !== SPECIAL_AMAZON), ...(enabled ? [SPECIAL_AMAZON] : [])],
+          ...r, waybill: enabled ? label : r.waybill, issues: [...r.issues.filter((c) => c !== "special_amazon" && c !== "special_shenzhen"), ...(enabled ? [specialIssue(label)] : [])],
         } : r);
         rowsRef.current = updated;
         setRows(updated);
         setSelected([]);
-        if (enabled) setPickedWaybills((prev) => prev.includes(row.waybill.trim() || "__none__") ? [...new Set([...prev, "亚马逊"])] : prev);
+        if (enabled) setPickedWaybills((prev) => prev.includes(row.waybill.trim() || "__none__") ? [label] : prev);
       }
     } catch (e) { setError("特殊出货标记保存失败：" + errorText(e)); }
     finally { setSavingSpecial(false); }
@@ -1220,9 +1259,6 @@ export default function PackingPage({
     if (v) next[key] = v;
     else delete next[key];
     waybillPatchRef.current = next;
-    api.setSetting(KEY_WAYBILL_PATCH, JSON.stringify(next)).catch(() => {
-      // 记不住不影响这次改动
-    });
   };
 
   /** 往剪贴板写文本（WebView 里 clipboard 可能没权限，回退到 textarea） */
@@ -1336,11 +1372,16 @@ export default function PackingPage({
 
   const mobilePayload = (): MobileRowDto[] =>
     rowsRef.current.map((r) => ({
+      syncId:r.syncId,
+      manualFields:r.manualFields,
+      destination:r.destination,seq:r.seq,sourceRow:r.sourceRow,cloudAuthoritative:!externalFileRef.current,quantityGroup:r.quantityGroup,qtyRaw:r.qtyRaw,cargo:r.cargo,
       sourceId: sheetGenerationRef.current,
       waybill: r.waybill,
       inbound: r.inbound,
       name: r.name,
       customer: r.customer,
+      arrival: r.arrival,
+      remarks: r.cargo?.remarks || "",
       qty: r.qty,
       checked: r.checked,
       issues: r.issues,
@@ -1351,6 +1392,33 @@ export default function PackingPage({
     }));
 
   /** 只把手机服务拉起来，不碰面板；silent = 启动时自动开，失败不吵人 */
+  const mobilePayloadRef = useRef(mobilePayload);
+  mobilePayloadRef.current = mobilePayload;
+  useEffect(() => {
+    if (!mobileInfo) return;
+    let polling = false;
+    const pull = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const id = await api.takeMobileCloudRefresh();
+        if (id === null) return;
+        let failure: string | undefined;
+        try {
+          if (externalFileRef.current) throw new Error("电脑正在查看本地文件，请先切回云表格再刷新");
+          if (busy || savingChecksRef.current || savingSpecial || checkFailure || document.activeElement?.closest(".ant-table input, .ant-table textarea")) throw new Error("电脑正在编辑或保存，请完成后重试");
+          await sync(cloudSheet ?? undefined, { refreshRemote: true, throwOnError: true });
+          await api.mobileSync(mobilePayloadRef.current());
+        } catch (error) { failure = errorText(error); }
+        await api.finishMobileCloudRefresh(id, failure);
+      } catch { /* 通讯恢复后下一次轮询重试。 */ }
+      finally { polling = false; }
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), 1000);
+    return () => window.clearInterval(timer);
+  }, [mobileInfo?.port, sync, cloudSheet, busy, savingSpecial, checkFailure]);
+
   const startMobileService = async (silent = false): Promise<boolean> => {
     if (mobileInfo) return true;
     try {
@@ -1451,7 +1519,7 @@ export default function PackingPage({
   };
 
   /** 表结构变了（换表、改名字/数量）才推给手机；勾选由两边各自轮询 */
-  const mobileSig = sheetGenerationRef.current + rows.map((r) => `${r.waybill}|${r.inbound}|${r.name}|${r.qty}|${r.issues.includes(SPECIAL_AMAZON)}`).join("~");
+  const mobileSig = sheetGenerationRef.current + JSON.stringify(rows.map((r) => [r.waybill, r.inbound, r.name, r.qty, r.customer, r.arrival, r.cargo?.remarks, specialLabel(r)]));
   useEffect(() => {
     if (!mobileInfo) return;
     const timer = setTimeout(() => {
@@ -1588,7 +1656,7 @@ export default function PackingPage({
                 if (on) void sync(undefined, { background: true, applyAnyway: true });
               }}
             >
-              有更新自动换表
+              动态心跳检查云文档（活跃1–5分钟，空闲10分钟）
             </Checkbox>
 
                 </div>
@@ -1702,7 +1770,7 @@ export default function PackingPage({
                 >
                   <div className="pin-chip-top">
                     <span className="pin-chip-name">{r.name}</span>
-                    <span className="pin-chip-qty">{r.qty} 件</span>
+                    <span className="pin-chip-qty">{quantityText(r)}</span>
                   </div>
                   <div className="pin-chip-meta">
                     {r.customer || "—"} · <span className="mono">{r.inbound}</span>
@@ -1774,6 +1842,16 @@ export default function PackingPage({
       {sheet?.warnings?.length ? (
         <Alert type="warning" showIcon message={sheet.warnings.join("；")} />
       ) : null}
+
+      {sharedQuantityGroups.length > 0 && <Alert type="info" showIcon
+        message="原表合箱：以下商品共用箱数，合计只计一次"
+        description={<div>{sharedQuantityGroups.map(({ range, items, total }) => <div key={range}>
+          <strong>{cloudSheet ? `${cloudSheet} · ` : ""}{range}：共 {total} 箱</strong>
+          {items.map(row => <Button key={rowKey(row)} type="link" size="small" onClick={() => setDetailKey(rowKey(row))}>
+            原表第 {row.sourceRow} 行 · {row.name}
+          </Button>)}
+        </div>)}</div>}
+      />}
 
       {rows.length > 0 && (
         <Card
@@ -1868,39 +1946,35 @@ export default function PackingPage({
             <span className="chips-title">按单号</span>
             <span className="chips-sum">
               {pickedWaybills.length > 0
-                ? `已选 ${pickedWaybills.length} 票 · ${shownBoxes} 件`
+                ? `只看 ${pickedWaybills.length} 票 · ${shownBoxes} 件`
                 : `未筛选 · 共 ${progress.length} 票 · ${totalQty} 件`}
             </span>
             <span style={{ flex: 1 }} />
             <button
               className="link-btn"
-              onClick={() => setPickedWaybills(progress.map((p) => p.key))}
-              disabled={progress.length === 0}
-              title="把这一批单号全部选上，再点掉不要的"
-            >
-              全选
-            </button>
-            <button
-              className="link-btn"
               onClick={() => setPickedWaybills([])}
               disabled={pickedWaybills.length === 0}
+              title="取消单号筛选，显示全部票"
             >
-              清空
+              显示全部
             </button>
           </div>
           <div className="waybill-chips">
             {progress.map((p) => {
               const on = pickedWaybills.includes(p.key);
+              // 整票已出完：给一个绿色标识，扫一眼就知道哪些票结清了。
+              const finished = p.total > 0 && p.left === 0;
               return (
                 <button
                   key={p.key}
-                  className={`wchip${on ? " on" : ""}`}
-                  onClick={(e) => pickWaybill(p.key, e.shiftKey)}
-                  title={on ? "点击取消这一票；Shift 点另一票可连选" : "点击加入筛选；Shift 点另一票可连选"}
+                  className={`wchip${on ? " on" : ""}${finished ? " done" : ""}`}
+                  onClick={() => pickWaybill(p.key)}
+                  title={on ? "再点一次取消，回到全部票" : `只看 ${p.waybill}`}
                   aria-pressed={on}
                 >
                   <span className="wchip-k">
                     <span className="mono">{p.waybill}</span>
+                    {finished && <span className="wchip-done">已出完</span>}
                     {rows.some((r) => r.waybill.trim() === p.key && (r.issues.includes(HISTORY_ISSUE) || r.issues.includes(ARCHIVED_WAYBILL_ISSUE))) && <span className="packing-history-label">含存档</span>}
                     <i className="wchip-check" aria-hidden="true" />
                   </span>
@@ -1959,7 +2033,7 @@ export default function PackingPage({
                         <div className="board-card-cust">{r.customer || "—"}</div>
                         <div className="board-card-row">
                           <span className="board-card-name">{r.name}</span>
-                          <span className="board-card-qty">{r.qty} 件</span>
+                          <span className="board-card-qty">{quantityText(r)}</span>
                           <span
                             className="board-card-inbound"
                             style={{ fontFamily: "Consolas, monospace" }}
@@ -1999,8 +2073,8 @@ export default function PackingPage({
               scroll={{ x: 1100, y: "100%" }}
               rowClassName={(r) => {
                 if (isFold(r)) return "packing-fold-row";
-                if (r.issues.includes(HISTORY_ISSUE)) return "packing-row-history" + (!r.inbound.trim() && !r.issues.includes(SPECIAL_AMAZON) ? " packing-row-missing-inbound" : "");
-                if (!r.inbound.trim() && !r.issues.includes(SPECIAL_AMAZON)) return "packing-row-missing-inbound";
+                if (r.issues.includes(HISTORY_ISSUE)) return "packing-row-history" + (!r.inbound.trim() && !hasSpecialShipment(r) ? " packing-row-missing-inbound" : "");
+                if (!r.inbound.trim() && !hasSpecialShipment(r)) return "packing-row-missing-inbound";
                 return r.issues.some((c) => PROBLEM_ISSUES.has(c)) ? "packing-row-warn" : "";
               }}
               onRow={(r) => {

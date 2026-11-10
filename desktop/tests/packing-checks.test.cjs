@@ -16,7 +16,7 @@ function setup() {
     const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/pages/packing/',file),'utf8'),
       {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
     const module={exports:{}};
-    vm.runInNewContext(code,{module,exports:module.exports,require:n=> n==='react'?react:n==='./recordKey'?load('recordKey.ts'):{api,errorText:String,errorHint:()=>''}});
+    vm.runInNewContext(code,{module,exports:module.exports,require:n=> n==='react'?react:n==='./recordKey'?load('recordKey.ts'):n==='./masterRows'?load('masterRows.ts'):{api,errorText:String,errorHint:()=>''}});
     return module.exports;
   }
   const {usePackingChecks}=load('usePackingChecks.ts');
@@ -66,4 +66,22 @@ test('亚马逊免单号只认当前行已保存标记，撤销后恢复拦截',
  h.options.rowsRef.current=[{...h.row,waybill:'',inbound:'',issues:[]}];
  assert.equal(await h.render().saveChecks([{...h.options.rowsRef.current[0],issues:['special_amazon'],checked:true}]),false);
  assert.equal(h.calls.length,1);
+});
+
+test('发深圳免单号使用独立标记，不接受请求伪造的路线标记',async()=>{
+ const h=setup();
+ h.options.rowsRef.current=[{...h.row,waybill:'发深圳',inbound:'',issues:['special_shenzhen']}];
+ assert.equal(await h.render().saveChecks([{...h.options.rowsRef.current[0],checked:true}]),true);
+ h.options.rowsRef.current=[{...h.row,waybill:'发深圳',inbound:'',issues:[]}];
+ assert.equal(await h.render().saveChecks([{...h.options.rowsRef.current[0],issues:['special_shenzhen'],checked:true}]),false);
+});
+
+test('完整手机快照保留原表行号及合箱计数，不把旧一箱重复加回',()=>{
+ const h=setup();
+ const source={...h.row,seq:7,sourceRow:375,quantityGroup:'I374:I375',qty:0,qtyRaw:'1',issues:['qty_shared'],destination:'仓库'};
+ h.options.rowsRef.current=[source];
+ h.render().applyMobileSnapshot([{...source,sourceRow:undefined,quantityGroup:undefined,qty:1,issues:[],checked:true,sourceId:'source-a',masterRevision:1}]);
+ const row=h.options.rowsRef.current[0];
+ assert.equal(row.qty,0);assert.equal(row.sourceRow,375);assert.equal(row.quantityGroup,'I374:I375');
+ assert.ok(row.issues.includes('qty_shared'));assert.equal(row.checked,true);assert.equal(h.calls.length,0);
 });

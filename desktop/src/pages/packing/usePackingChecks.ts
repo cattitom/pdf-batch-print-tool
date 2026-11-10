@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject, type Dispatch, type
 import { api, errorHint, errorText, type MobileRowDto } from "../../api";
 import type { PackingItemDto } from "../../bindings/PackingItemDto";
 import { rowKey } from "./recordKey";
+import { fromMobileRow, masterIdentity } from "./masterRows";
 
 type Options = {
   rowsRef: MutableRefObject<PackingItemDto[]>;
@@ -12,6 +13,7 @@ type Options = {
   setSavedPath: Dispatch<SetStateAction<string | null>>;
   setError: Dispatch<SetStateAction<string | null>>;
   mobilePort?: number;
+  onMasterSnapshot?: (rows:PackingItemDto[])=>void;
 };
 
 /** 出货保存、失败重试及手机快照读取集中在此，页面只负责操作入口。 */
@@ -25,15 +27,26 @@ export function usePackingChecks(options: Options) {
   } | null>(null);
   const savingChecksRef = useRef(false);
   const checkFailureRef = useRef(false);
+  const masterRevisionRef=useRef(0);
   const applyMobileSnapshot = (remote: MobileRowDto[]) => {
-    const current = remote.filter((r) => r.sourceId === sheetGenerationRef.current);
+    const current = remote.filter((r) => r.sourceId === sheetGenerationRef.current || (!r.sourceId && (r.masterRevision||0)>0));
     mobileVersionsRef.current = current;
+    const revision=Math.max(0,...current.map(r=>r.masterRevision||0));
+    if(revision>masterRevisionRef.current){
+      masterRevisionRef.current=revision;
+      const next=current.map(remote=>fromMobileRow(remote,rowsRef.current.find(source=>
+        remote.syncId && source.syncId ? remote.syncId===source.syncId
+          : !!remote.seq && masterIdentity({...remote,destination:remote.destination||"",seq:remote.seq||0})===masterIdentity(source))));
+      for(const r of next)if(r.manualFields?.includes("checked"))checkedRef.current[rowKey(r)]=r.checked;
+      rowsRef.current=next;setRows(next);options.onMasterSnapshot?.(next);return;
+    }
     const byKey = new Map(current.map((r) => [rowKey(r), r.checked]));
     const next = rowsRef.current.map((r) => {
       const checked = byKey.get(rowKey(r));
       if (checked === undefined) return r;
-      checkedRef.current[rowKey(r)] = checked;
-      return r.checked === checked ? r : { ...r, checked };
+      const remoteRow=current.find(remote=>rowKey(remote)===rowKey(r));
+      if(remoteRow?.manualFields?.includes("checked")) checkedRef.current[rowKey(r)] = checked;
+      return { ...r,checked,syncId:remoteRow?.syncId||r.syncId,manualFields:remoteRow?.manualFields||r.manualFields };
     });
     rowsRef.current = next;
     setRows(next);
@@ -61,7 +74,7 @@ export function usePackingChecks(options: Options) {
     const normalized = changes.map((r) => ({
       waybill: r.waybill.trim(), inbound: r.inbound.trim(), name: r.name.trim(), checked: r.checked,
     }));
-    if (normalized.some((r) => r.checked && (!r.inbound || !r.waybill) && !rowsRef.current.some((row) => rowKey(row) === rowKey(r) && row.issues?.includes("special_amazon")))) {
+    if (normalized.some((r) => r.checked && (!r.inbound || !r.waybill) && !rowsRef.current.some((row) => rowKey(row) === rowKey(r) && (row.issues?.includes("special_amazon") || row.issues?.includes("special_shenzhen"))))) {
       setError("入库号和单号必须都填写，才能出货");
       return false;
     }

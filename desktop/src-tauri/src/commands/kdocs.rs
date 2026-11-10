@@ -2,7 +2,7 @@
 //!
 //! 链路：带登录态的 Chrome（`kdocs-login.bat` 起的，9222 调试端口；没开就自己起 headless）
 //!   → 页面内 fetch 拿 presigned 下载地址 → 下载 .xls
-//!   → `core::xls` 自己解 BIFF8 → `parse_table` 变成待办（不依赖 Python）
+//!   → `core::xls` 通过 rxls 读取 Excel → `parse_table` 变成待办（不依赖 Python）
 //!
 //! 取数脚本用 `include_str!` 内嵌，运行期写到缓存目录，打包时不用再配 resources。
 

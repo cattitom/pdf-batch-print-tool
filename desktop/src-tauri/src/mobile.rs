@@ -39,6 +39,20 @@ const JS: &str = include_str!("../mobile/m.js");
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct MobileRow {
+    pub sync_id: String,
+    pub source_identity: String,
+    pub master_revision: u64,
+    pub manual_fields: Vec<String>,
+    pub known_fields: Vec<String>,
+    pub destination: String,
+    pub seq: u32,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub source_row: Option<u32>,
+    pub cloud_authoritative: bool,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub quantity_group: Option<String>,
+    pub qty_raw: String,
+    pub cargo: std::collections::BTreeMap<String,String>,
     #[serde(default)]
     pub source_id: String,
     #[serde(default)]
@@ -51,6 +65,8 @@ pub struct MobileRow {
     pub inbound: String,
     pub name: String,
     pub customer: String,
+    pub arrival: String,
+    pub remarks: String,
     pub qty: i64,
     #[serde(default)]
     pub checked: bool,
@@ -83,20 +99,36 @@ pub struct MobileInfo {
     pub warn: Option<String>,
 }
 
-struct Inner {
+pub(crate) struct Inner {
     info: Option<MobileInfo>,
-    rows: Vec<MobileRow>,
+    pub(crate) rows: Vec<MobileRow>,
     /// 认领：单号 → 谁领的（手机点「领取任务」写进来）
     claims: std::collections::HashMap<String, String>,
     stop: Option<Arc<AtomicBool>>,
 }
 
 pub struct Shared {
-    inner: Mutex<Inner>,
-    db: Arc<Mutex<pdfimpose_core::Db>>,
+    activity: std::sync::atomic::AtomicU64,
+    refresh: Mutex<CloudRefresh>,
+    pub(crate) inner: Mutex<Inner>,
+    pub(crate) db: Arc<Mutex<pdfimpose_core::Db>>,
 }
 
 pub type MobileShared = Arc<Shared>;
+pub fn last_activity(shared: &MobileShared) -> u64 { shared.activity.load(Ordering::Relaxed) }
+
+#[derive(Clone, Default, Serialize)]
+pub struct CloudRefresh { pub id: u64, pub state: String, pub error: Option<String> }
+pub fn take_cloud_refresh(shared: &MobileShared) -> Option<u64> {
+    let mut task = shared.refresh.lock().unwrap_or_else(|p|p.into_inner());
+    if task.state != "requested" { return None; }
+    task.state = "running".into(); Some(task.id)
+}
+pub fn finish_cloud_refresh(shared: &MobileShared, id: u64, error: Option<String>) {
+    let mut task = shared.refresh.lock().unwrap_or_else(|p|p.into_inner());
+    if task.id != id || task.state != "running" { return; }
+    task.state = if error.is_some() { "error" } else { "done" }.into(); task.error = error;
+}
 
 #[cfg(test)]
 pub fn new_shared() -> MobileShared {
@@ -105,6 +137,8 @@ pub fn new_shared() -> MobileShared {
 
 pub fn with_db(db: Arc<Mutex<pdfimpose_core::Db>>) -> MobileShared {
     Arc::new(Shared {
+        activity: std::sync::atomic::AtomicU64::new(0),
+        refresh: Mutex::new(CloudRefresh::default()),
         db,
         inner: Mutex::new(Inner {
             info: None,
@@ -113,6 +147,15 @@ pub fn with_db(db: Arc<Mutex<pdfimpose_core::Db>>) -> MobileShared {
             stop: None,
         }),
     })
+}
+
+#[cfg(test)]
+pub(crate) fn isolated_test_server(shared:&MobileShared)->(u16,Arc<AtomicBool>){
+    let server=Server::http("127.0.0.1:0").unwrap();let port=server.server_addr().to_ip().unwrap().port();
+    shared.inner.lock().unwrap().info=Some(MobileInfo{url:String::new(),urls:vec![],token:"a".repeat(64),port,qr_svg:String::new(),warn:None});
+    let stop=Arc::new(AtomicBool::new(false));let flag=stop.clone();let shared=shared.clone();
+    thread::spawn(move||while !flag.load(Ordering::Relaxed){if let Ok(Some(req))=server.recv_timeout(Duration::from_millis(100)){handle(req,&shared);}});
+    (port,stop)
 }
 
 fn now_secs() -> u64 {
@@ -420,17 +463,24 @@ fn prepare_rows(rows: &mut [MobileRow], old: &[MobileRow]) {
     static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let same = rows.len() == old.len() && rows.iter().zip(old).all(|(a,b)|
         record_id(&a.waybill,&a.inbound,&a.name) == record_id(&b.waybill,&b.inbound,&b.name)
-        && a.qty == b.qty && a.issues == b.issues && a.blocked == b.blocked && a.source_id == b.source_id);
+        && a.qty == b.qty && a.issues == b.issues && a.blocked == b.blocked && a.source_id == b.source_id
+        && a.customer == b.customer && a.arrival == b.arrival && a.remarks == b.remarks);
     let dataset = if same && !old.is_empty() { old[0].dataset_id.clone() } else {
         format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos(),
             GENERATION.fetch_add(1, Ordering::Relaxed))
     };
+    let mut counts=std::collections::HashMap::new();for row in rows.iter(){*counts.entry(record_id(&row.waybill,&row.inbound,&row.name)).or_insert(0)+=1;}
     for row in rows {
         row.record_id = record_id(&row.waybill,&row.inbound,&row.name);
         row.dataset_id = dataset.clone();
         row.version = 0;
-        if let Some(previous) = old.iter().find(|r| r.record_id == row.record_id) {
-            row.checked = previous.checked;
+        let matches:Vec<_>=old.iter().filter(|r|if !row.sync_id.is_empty(){row.sync_id==r.sync_id}else{r.record_id == row.record_id&&(counts[&row.record_id]==1||row.seq>0&&row.seq==r.seq)}).collect();
+        if let [previous] = matches.as_slice() {
+            if row.sync_id.is_empty() {row.sync_id=previous.sync_id.clone();}
+            if row.source_identity.is_empty(){row.source_identity=previous.source_identity.clone();}
+            row.master_revision=previous.master_revision;
+            for field in &previous.manual_fields {if (!row.cloud_authoritative||field=="waybill")&&!row.manual_fields.contains(field) {row.manual_fields.push(field.clone());}}
+            if !row.cloud_authoritative {row.checked = previous.checked;}
             if same { row.version = previous.version; }
         }
     }
@@ -454,7 +504,7 @@ pub fn commit_checks(
                 .get_setting("packing_special_shipments").map_err(|e| (500,e.to_string()))?;
             let special = raw.and_then(|s| serde_json::from_str::<std::collections::HashMap<String,String>>(&s).ok())
                 .and_then(|m| m.get(&id).cloned());
-            if special.as_deref() != Some("亚马逊") {
+            if !matches!(special.as_deref(), Some("亚马逊" | "发深圳")) {
                 return Err((400,"入库号和单号必须都填写，才能出货".into()));
             }
         }
@@ -475,6 +525,7 @@ pub fn commit_checks(
         if let Some(index) = index {
             let id = inner.rows[index].record_id.clone();
             for row in inner.rows.iter_mut().filter(|r| r.record_id == id) {
+                if !row.manual_fields.iter().any(|f|f=="checked") {row.manual_fields.push("checked".into());}
                 row.checked = *checked;
                 row.version += 1;
             }
@@ -596,6 +647,9 @@ fn handle(mut req: Request, shared: &MobileShared) {
         _ => None,
     };
 
+    if authed && matches!(path, "/api/sheet" | "/api/check" | "/api/refresh" | "/api/master-sync") {
+        shared.activity.store(now_secs(), Ordering::Relaxed);
+    }
     match (req.method().clone(), path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             let mut resp = Response::from_string(PAGE)
@@ -623,6 +677,29 @@ fn handle(mut req: Request, shared: &MobileShared) {
             match crate::mobile_update::response(version, path.ends_with("/manifest")) {
                 Ok(body) => respond(req, body, "application/json; charset=utf-8", 200),
                 Err((status, error)) => respond(req, json!({"error":error}).to_string(), "application/json; charset=utf-8", status),
+            }
+        }
+        (Method::Post, "/api/refresh") | (Method::Get, "/api/refresh") => {
+            let mut task = shared.refresh.lock().unwrap_or_else(|p|p.into_inner());
+            if *req.method() == Method::Post && task.state != "requested" && task.state != "running" {
+                task.id += 1; task.state = "requested".into(); task.error = None;
+            }
+            let body = serde_json::to_string(&*task).unwrap();
+            drop(task);
+            respond(req, body, "application/json; charset=utf-8", 200);
+        }
+        (Method::Post, "/api/master-sync") => {
+            use std::io::Read;
+            let mut body=String::new();
+            if req.as_reader().take(8*1024*1024+1).read_to_string(&mut body).is_err() || body.len()>8*1024*1024 {
+                respond(req,json!({"error":"同步包超过8MB或读取失败"}).to_string(),"application/json",413);return;
+            }
+            let input=match serde_json::from_str::<crate::mobile_master::Request>(&body) {
+                Ok(v)=>v,Err(_)=>{respond(req,json!({"error":"同步包格式不正确"}).to_string(),"application/json",400);return;}
+            };
+            match crate::mobile_master::exchange(shared,input) {
+                Ok(data)=>respond(req,serde_json::to_string(&data).unwrap(),"application/json; charset=utf-8",200),
+                Err((status,error))=>respond(req,json!({"error":error}).to_string(),"application/json; charset=utf-8",status),
             }
         }
         (Method::Get, "/api/sheet") => {
@@ -815,6 +892,8 @@ mod tests {
 
                 claimed_by: String::new(),
             source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
+            arrival: String::new(), remarks: String::new(),
+            ..Default::default()
             }];
         }
         assert!(toggle(&shared, "S1", "I1", "货", true));
@@ -851,6 +930,8 @@ mod tests {
 
                 claimed_by: String::new(),
             source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
+            arrival: String::new(), remarks: String::new(),
+            ..Default::default()
             }];
         }
         assert!(!toggle(&shared, "", "", "没有箱唛", true));
@@ -905,6 +986,19 @@ mod tests {
         commit_checks(&shared, &[("".into(), "".into(), "亚马逊货品".into(), false)], None).unwrap();
     }
 
+    #[test]
+    fn shenzhen_exception_requires_its_own_persisted_annotation() {
+        let shared = new_shared();
+        let id = record_id("发深圳", "", "深圳货品");
+        let changes = vec![("发深圳".into(), "".into(), "深圳货品".into(), true)];
+        assert_eq!(commit_checks(&shared,&changes,None).unwrap_err().0,400);
+        shared.db.lock().unwrap().set_setting("packing_special_shipments", &json!({id.clone():"发深圳"}).to_string()).unwrap();
+        commit_checks(&shared,&changes,None).unwrap();
+        assert!(shared.db.lock().unwrap().all_packing_checks().unwrap()[0].3);
+        shared.db.lock().unwrap().set_setting("packing_special_shipments", &json!({id:"其他路线"}).to_string()).unwrap();
+        assert_eq!(commit_checks(&shared,&changes,None).unwrap_err().0,400);
+    }
+
     fn http(host: &str, req: &str) -> String {
         let mut s = TcpStream::connect(host).expect("connect");
         s.write_all(req.as_bytes()).expect("write");
@@ -934,6 +1028,8 @@ mod tests {
 
             claimed_by: String::new(),
             source_id: String::new(), record_id: String::new(), dataset_id: String::new(), version: 0,
+            arrival: String::new(), remarks: String::new(),
+            ..Default::default()
         }];
         let info = start(&shared, seed, "testtoken".into(), None).expect("start server");
         let host = format!("127.0.0.1:{}", info.port);
@@ -948,6 +1044,18 @@ mod tests {
         );
         assert!(sheet.contains("测试货"));
         assert!(sheet.contains("\"rows\""));
+        let refresh_request = format!("POST /api/refresh?t={} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",info.token);
+        let requested = http(&host,&refresh_request);
+        assert!(requested.contains("requested"));
+        assert!(http(&host,"POST /api/refresh HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").contains("403"));
+        let id = take_cloud_refresh(&shared).unwrap();
+        assert!(take_cloud_refresh(&shared).is_none());
+        assert!(http(&host,&refresh_request).contains("running"),"重复点击复用当前任务");
+        finish_cloud_refresh(&shared,id+1,None);
+        assert_eq!(shared.refresh.lock().unwrap().state,"running");
+        finish_cloud_refresh(&shared,id,None);
+        let status = http(&host,&format!("GET /api/refresh?t={} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",info.token));
+        assert!(status.contains("done"));
         let manifest = http(&host, &format!("GET /api/app-update/manifest?t={} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", info.token));
         assert!(manifest.contains("200 OK") && manifest.contains("shellApi"));
         let private_update = http(&host, "GET /api/app-update/manifest HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
@@ -957,6 +1065,7 @@ mod tests {
 
         let unpaired = http(&host, "GET /api/sheet HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
         assert!(unpaired.contains("403"));
+        assert!(last_activity(&shared) > 0,"已配对手机读取清单会更新活跃时间");
 
         let denied = http(&host, "GET /api/sheet?t=bad HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
         assert!(denied.contains("403"));
@@ -1136,6 +1245,14 @@ mod tests {
 #[cfg(test)]
 mod required_shipping_ids_tests {
     use super::*;
+    #[test]
+    fn cloud_refresh_keeps_cloud_status_instead_of_previous_phone_check() {
+        let previous=MobileRow{inbound:"I".into(),name:"商品".into(),waybill:"W".into(),record_id:record_id("W","I","商品"),checked:true,manual_fields:vec!["checked".into()],..Default::default()};
+        let mut latest=vec![MobileRow{cloud_authoritative:true,checked:false,..previous.clone()}];
+        latest[0].manual_fields.clear();
+        prepare_rows(&mut latest,&[previous]);
+        assert!(!latest[0].checked);assert!(!latest[0].manual_fields.iter().any(|f|f=="checked"));
+    }
     #[test]
     fn shipping_requires_both_numbers_but_allows_undo() {
         let shared = new_shared();

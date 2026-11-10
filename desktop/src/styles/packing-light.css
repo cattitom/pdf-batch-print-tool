@@ -59,10 +59,14 @@
 .packing-filter-footer .ant-btn-text { color: #687385; }
 .packing-filter-empty { text-align: center; padding: 25px 12px; color: #8b95a4; font-size: 12px; }
 .packing-page .wchip { border-radius: 6px; box-shadow: none; padding: 7px 11px; }
+.packing-page .wchip.done { border-color: #b7e3c6; background: #f4fbf6; }
+.packing-page .wchip.done .wchip-v { color: #1a7f45; }
 .packing-page .wchip.on { background: #edf3ff; border-color: #adc7ff; color: #245bdb; }
+.packing-page .wchip.on .wchip-v { color: #245bdb; }
 .packing-page .wchip.on .wchip-k, .packing-page .wchip.on .wchip-v { color: #245bdb; }
 .packing-page .wchip.on .wchip-m { color: #607aa6; }
-.packing-page .wchip.on .wchip-check { background: #3370ff; border-color: #3370ff; }
+.packing-page .wchip.on .wchip-check { background: #3370ff; border-color: #3370ff; color: #fff; }
+.packing-page .wchip.on .wchip-done { background: #dbe9ff; color: #245bdb; }
 .packing-page .packing-table .ant-table-thead > tr > th { background: #f7f8fa; color: #687385; font-size: 12px; font-weight: 500; border-bottom: 1px solid #e6eaf0; }
 .packing-page .packing-table .ant-table-thead > tr > th:not(:last-child),
 .packing-page .packing-table .ant-table-tbody > tr > td:not(:last-child) { border-right: 1px solid #f0f2f6; }

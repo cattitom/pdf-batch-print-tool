@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct AppState {
     pub db: std::sync::Arc<Mutex<core::Db>>,
+    pub config_path: std::path::PathBuf,
 }
 
 /// 命令错误：前端只依赖 `code`，`message` 用于直接展示。
@@ -62,7 +63,9 @@ pub fn init_state(app: &tauri::App) -> Result<AppState, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建应用数据目录：{e}"))?;
     let db = core::Db::open(dir.join("pdf-tool.db"))
         .map_err(|e| format!("打开数据库失败（{}）：{e:?}", dir.join("pdf-tool.db").display()))?;
-    Ok(AppState { db: std::sync::Arc::new(Mutex::new(db)) })
+    let config_path=dir.join("config.json");
+    crate::config_file::ensure(&config_path,&db.all_settings().map_err(|e|e.to_string())?)?;
+    Ok(AppState { db: std::sync::Arc::new(Mutex::new(db)),config_path })
 }
 
 fn db<'a>(state: &'a State<AppState>) -> std::sync::MutexGuard<'a, core::Db> {
@@ -618,12 +621,70 @@ pub fn preview_product_label(items: Vec<core::ProductLabelItem>) -> Result<Strin
 
 #[tauri::command]
 pub fn all_settings(state: State<AppState>) -> Result<std::collections::HashMap<String, String>, ApiError> {
-    Ok(db(&state).all_settings().map_err(ApiError::from)?.into_iter().collect())
+    let guard=db(&state);
+    let mut settings:std::collections::HashMap<_,_>=guard.all_settings().map_err(ApiError::from)?.into_iter().collect();
+    settings.extend(crate::config_file::values(&state.config_path).map_err(ApiError::from)?);
+    Ok(settings)
 }
 
 #[tauri::command]
+pub fn config_file_path(state:State<AppState>)->String{state.config_path.to_string_lossy().into_owned()}
+
+#[tauri::command]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<(), ApiError> {
-    db(&state).set_setting(&key, &value).map_err(ApiError::from)
+    let guard=db(&state);
+    if crate::config_file::is_preference(&key){return crate::config_file::set(&state.config_path,&key,&value).map_err(ApiError::from);}
+    guard.set_setting(&key, &value).map_err(ApiError::from)
+}
+
+// ---------- 出货档案：正规化存档表 ----------
+//
+// 过去前端把整票明细塞进 settings 的 `packing_archive_v1:<票号>` JSON，
+// 同一个单号会有「原文」和「URL 编码」两个键，各存一份，永远不会互相清账。
+// 现在只有 archive_ticket / archive_item 两张表，主键即业务唯一键，
+// 重复写入直接覆盖，不存在双份。
+
+/// 一票的历史存档。字段与前端 ArchivedTicket 一致。
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ArchivedTicketDto {
+    pub waybill: String,
+    pub updated_at: String,
+    pub items: Vec<PackingItemDto>,
+}
+
+/// 当前台账协议模式。存档与台账都不再放在 settings JSON 里，
+/// 前端判断「是否台账模式」也必须问库，不能再去解析旧键。
+#[tauri::command]
+pub fn ledger_mode(state: State<AppState>) -> Result<String, ApiError> {
+    db(&state).ledger_mode().map_err(ApiError::from)
+}
+
+#[tauri::command]
+pub fn ledger_archive_tickets(state: State<AppState>) -> Result<Vec<ArchivedTicketDto>, ApiError> {
+    let tickets = db(&state).archive_tickets().map_err(ApiError::from)?;
+    Ok(tickets
+        .into_iter()
+        .map(|t| ArchivedTicketDto {
+            waybill: t["waybill"].as_str().unwrap_or("").to_owned(),
+            updated_at: t["updatedAt"].as_str().unwrap_or("").to_owned(),
+            items: t["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                .collect(),
+        })
+        .collect())
+}
+
+/// 落档：按 (票,入库号,商品,客户,目的地,明细序号) 唯一，重复直接覆盖。
+#[tauri::command]
+pub fn ledger_archive_save(state: State<AppState>, rows: Vec<PackingItemDto>) -> Result<(), ApiError> {
+    let values: Vec<serde_json::Value> =
+        rows.into_iter().filter_map(|row| serde_json::to_value(row).ok()).collect();
+    db(&state).archive_rows(&values).map_err(ApiError::from)
 }
 
 // ---------- 出货清单：已录勾选 ----------
@@ -686,7 +747,21 @@ pub fn clear_packing_checks(state: State<AppState>) -> Result<(), ApiError> {
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct PackingItemDto {
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    #[ts(optional)]
+    pub sync_id: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    #[ts(optional)]
+    pub manual_fields: Option<Vec<String>>,
     pub seq: u32,
+    /// Excel 原表行号（一基）
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    #[ts(optional)]
+    pub source_row: Option<u32>,
+    /// 共用箱数的原表合并区域
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    #[ts(optional)]
+    pub quantity_group: Option<String>,
     pub name: String,
     #[ts(type = "number")]
     pub qty: i64,
@@ -731,7 +806,10 @@ impl From<core::PackingSheet> for PackingSheetDto {
                 .items
                 .into_iter()
                 .map(|i| PackingItemDto {
+                    sync_id:None,manual_fields:None,
                     seq: i.seq,
+                    source_row: i.source_row,
+                    quantity_group: i.quantity_group,
                     name: i.name,
                     qty: i.qty,
                     qty_raw: i.qty_raw,
@@ -1067,6 +1145,23 @@ pub fn mobile_sync(state: State<'_, MobileShared>, rows: Vec<MobileRow>) {
 #[tauri::command]
 pub fn mobile_rows(state: State<'_, MobileShared>) -> Vec<MobileRow> {
     mobile::rows(&state)
+}
+
+#[tauri::command]
+pub fn save_mobile_master_edit(state: State<'_, MobileShared>,before:MobileRow,fields:std::collections::BTreeMap<String,serde_json::Value>)->Result<MobileRow,ApiError>{
+    crate::mobile_master::edit_local(&state,before,fields).map_err(|(status,message)|ApiError::new(if status==409{"conflict"}else{"db"},message))
+}
+
+#[tauri::command]
+pub fn take_mobile_cloud_refresh(state: State<'_, MobileShared>) -> Option<u64> {
+    crate::mobile::take_cloud_refresh(&state)
+}
+
+#[tauri::command]
+pub fn mobile_last_activity(state: State<'_, MobileShared>) -> u64 { crate::mobile::last_activity(&state) }
+#[tauri::command]
+pub fn finish_mobile_cloud_refresh(state: State<'_, MobileShared>, id: u64, error: Option<String>) {
+    crate::mobile::finish_cloud_refresh(&state, id, error);
 }
 
 #[tauri::command]

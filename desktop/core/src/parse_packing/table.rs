@@ -323,6 +323,29 @@ pub(crate) fn parse_table_styled(
     merged_expanded: bool,
     red: Option<&[Vec<bool>]>,
 ) -> PackingSheet {
+    parse_table_with_merges(rows, merged_expanded, red, &[])
+}
+
+pub(crate) fn parse_excel_sheet(sheet: crate::xls::Sheet) -> PackingSheet {
+    parse_table_with_merges(sheet.rows, true, Some(&sheet.red), &sheet.merges)
+}
+
+fn excel_column(mut index: usize) -> String {
+    let mut letters = Vec::new();
+    loop {
+        letters.push((b'A' + (index % 26) as u8) as char);
+        if index < 26 { break; }
+        index = index / 26 - 1;
+    }
+    letters.iter().rev().collect()
+}
+
+fn parse_table_with_merges(
+    rows: Vec<Vec<String>>,
+    merged_expanded: bool,
+    red: Option<&[Vec<bool>]>,
+    merges: &[(usize, usize, usize, usize)],
+) -> PackingSheet {
     let mut sheet = PackingSheet::default();
     if rows.is_empty() {
         sheet.warnings.push("没有读到任何数据行".to_string());
@@ -376,6 +399,8 @@ pub(crate) fn parse_table_styled(
     let mut waybill_in_rows = false;
     // 表尾的合计行（整行只有一个「总箱数」）：不是货物，记下来当整表合计数
     let mut table_total: Option<i64> = None;
+    let mut table_total_row = None;
+    let mut counted_quantity_groups = std::collections::BTreeSet::new();
 
     for (ri, row) in rows.iter().enumerate().skip(start) {
         if is_header_like(row) {
@@ -415,6 +440,7 @@ pub(crate) fn parse_table_styled(
             let v = parse_qty(&raw.qty_raw);
             if v > 0 {
                 table_total = Some(v);
+                table_total_row = Some(ri + 1);
             }
             continue;
         }
@@ -438,6 +464,7 @@ pub(crate) fn parse_table_styled(
         }
 
         let mut item = PackingItem {
+            source_row: merged_expanded.then_some((ri + 1) as u32),
             cargo: raw.cargo.clone(),
             name: raw.name.trim().to_string(),
             qty_raw: raw.qty_raw.trim().to_string(),
@@ -461,6 +488,12 @@ pub(crate) fn parse_table_styled(
             ..Default::default()
         };
 
+        // 标记栏的发深圳是特殊路线，不是单号，也不代表已出货。
+        if raw.arrival.trim() == "发深圳" || strategy.as_ref().and_then(|s| s.mark).and_then(|i| row.get(i)).is_some_and(|v| v.trim() == "发深圳") {
+            item.issues.push("special_shenzhen".to_string());
+            item.waybill = "发深圳".to_string();
+        }
+
         // WPS 把“1件装，285/箱”写在产品名称中时，同时保存结构化规格，名称原文不变。
         static PER_BOX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         static SPEC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -475,10 +508,11 @@ pub(crate) fn parse_table_styled(
             }
         }
 
-        // 客户名称通常只在段首写一次，下面沿用
-        if item.customer.is_empty() {
+        // XLS/XLSX 已展开真实合并区，空客户不得跨到上一客户段。
+        // 只有文本/OCR 没有合并信息，才允许段首名称向下沿用。
+        if item.customer.is_empty() && inherit_blank {
             item.customer = last_customer.clone();
-        } else {
+        } else if !item.customer.is_empty() {
             last_customer = item.customer.clone();
         }
 
@@ -510,7 +544,23 @@ pub(crate) fn parse_table_styled(
         }
 
         item.qty = parse_qty(&item.qty_raw);
-        if item.qty <= 0 {
+        // 数量合并表示这些商品共用箱数，而不是每行都有一份箱数。
+        if item.qty > 0 {
+            if let Some(strategy) = &strategy {
+                if let Some(&(r1, c1, r2, c2)) = merges.iter().find(|&&(r1, c1, r2, c2)| {
+                    r1 >= start && r2 > r1 && ri >= r1 && ri <= r2
+                        && strategy.qty >= c1 && strategy.qty <= c2
+                }) {
+                    let range = format!("{}{}:{}{}", excel_column(c1), r1 + 1, excel_column(c2), r2 + 1);
+                    item.quantity_group = Some(range.clone());
+                    if !counted_quantity_groups.insert(range) {
+                        item.qty = 0;
+                        item.issues.push("qty_shared".into());
+                    }
+                }
+            }
+        }
+        if item.qty <= 0 && item.quantity_group.is_none() {
             item.issues.push("qty".to_string());
         }
         if item.name.is_empty() {
@@ -578,7 +628,7 @@ pub(crate) fn parse_table_styled(
 
     // 表尾有合计行就用它；没有才退回文字里的「现N件」
     sheet.expected_qty = table_total.or_else(|| extract_expected(&rows));
-    items = dedupe(items, &mut sheet.warnings);
+    // 同名同入库号可以是分批出货：逐行保留数量与状态，不据此提示重复。
 
     for (i, item) in items.iter_mut().enumerate() {
         item.seq = (i + 1) as u32;
@@ -592,8 +642,10 @@ pub(crate) fn parse_table_styled(
     if let Some(expected) = sheet.expected_qty {
         if expected != sheet.total_qty {
             sheet.warnings.push(format!(
-                "合计对不上：图上 {expected} 件，解析出 {} 件",
-                sheet.total_qty
+                "合计对不上：{}合计 {expected} 件，明细汇总 {} 件，相差 {} 件；可在行详情按原表行号核对数量",
+                table_total_row.map(|r| format!("原表第 {r} 行")).unwrap_or_else(|| "原表标注".into()),
+                sheet.total_qty,
+                (sheet.total_qty - expected).abs()
             ));
         }
     }
@@ -671,48 +723,6 @@ pub(crate) fn extract_expected(rows: &[Vec<String>]) -> Option<i64> {
     } else {
         None
     }
-}
-
-/// 完全同款的行只留一条（OCR 会把同一行认两遍）。
-/// key 里必须带上数量/目的地：同一种货不同箱规是两批，不能被当成重复吃掉。
-pub(crate) fn dedupe(items: Vec<PackingItem>, warnings: &mut Vec<String>) -> Vec<PackingItem> {
-    let mut out: Vec<PackingItem> = Vec::new();
-    let mut index: BTreeMap<(String, String, String, i64, String), usize> = BTreeMap::new();
-
-    for item in items {
-        if item.name.is_empty() || item.inbound.is_empty() {
-            out.push(item);
-            continue;
-        }
-        let key = (
-            item.name.clone(),
-            item.inbound.clone(),
-            item.waybill.clone(),
-            item.qty,
-            item.destination.clone(),
-        );
-        match index.get(&key).copied() {
-            None => {
-                index.insert(key, out.len());
-                out.push(item);
-            }
-            Some(pos) => {
-                if item.checked && !out[pos].checked {
-                    let seq = out[pos].seq;
-                    out[pos] = item;
-                    out[pos].seq = seq;
-                    out[pos].issues.push("dup_mark".to_string());
-                    warnings.push(format!(
-                        "去重：{} / {} 保留已勾选的那条",
-                        out[pos].name, out[pos].inbound
-                    ));
-                } else {
-                    warnings.push(format!("去重：{} / {} 重复行已忽略", item.name, item.inbound));
-                }
-            }
-        }
-    }
-    out
 }
 
 // ---------- 文件读取 ----------

@@ -2,12 +2,12 @@
 //!
 //! 三种输入都先落到 `Vec<Vec<String>>`，之后共用同一套规则：
 //! 表头识别 → 列映射（没有表头时按截图模板的列序）→ 合并单元格展开 →
-//! 单号 / 目的地识别 → 逐行校验 → 去重。
+//! 单号 / 目的地识别 → 逐行校验；分批出货的同名同号记录分别保留。
 //!
 //! 与 UI 无关，可独立 `cargo test`。
 //!
 //! 模块划分：`text`（文本 / csv → 二维表）、`table`（表头识别与列映射，核心规则）、
-//! `xlsx`（xlsx 解压与 XML 解析）、`tests`（回归用例）。
+//! `xlsx`（Excel 库适配与合并值展开）、`tests`（回归用例）。
 
 use std::fmt;
 
@@ -25,6 +25,10 @@ pub(crate) use self::xlsx::*;
 #[derive(Debug, Clone, Default)]
 pub struct PackingItem {
     pub seq: u32,
+    /// Excel 原表行号（一基）；文本/OCR 无 Excel 行号。
+    pub source_row: Option<u32>,
+    /// 数量合并范围；同一组只在第一条货物上计入箱数。
+    pub quantity_group: Option<String>,
     pub name: String,
     /// 解析出的整数数量；0 表示这一行没读到数量
     pub qty: i64,
@@ -107,8 +111,11 @@ pub fn parse_file(path: &str) -> Result<PackingSheet, PackingError> {
 
     match ext.as_str() {
         // xlsx 里的合并单元格已经被 apply_merges 按真实 mergeCells 铺开
-        "xlsx" | "xlsm" => Ok(parse_table(read_xlsx(path)?, true)),
-        // .xls 自己解（WPS 云表格只给这个格式），自动挑最新一张来货登记表
+        "xlsx" | "xlsm" => {
+            let sheet = read_xlsx(path)?;
+            Ok(parse_excel_sheet(sheet))
+        },
+        // .xls 由 rxls 读取，自动挑最新一张来货登记表
         "xls" => parse_xls_file(path, None).map(|(sheet, _, _)| sheet),
         "csv" => Ok(parse_table(rows_from_text(&read_text_file(path)?, TableMode::Csv), false)),
         "txt" | "tsv" | "md" => {
@@ -156,8 +163,7 @@ pub fn parse_xls_file(
         .map_err(|e| PackingError::new("xls", e))?;
     // 合并单元格在 xls::Book 里已经铺开了（等价于 xlsx 走的 apply_merges）；
     // 红字矩阵一起传下去：原表里红色字体 = 已出货
-    let red = data.red;
-    Ok((parse_table_styled(data.rows, true, Some(&red)), picked, names))
+    Ok((parse_excel_sheet(data), picked, names))
 }
 
 /// 直接解析已经切好的二维表（OCR、外部导入用）。

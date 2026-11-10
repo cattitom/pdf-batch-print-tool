@@ -183,6 +183,13 @@
   border-color: rgba(15, 17, 21, 0.3);
   background: #f5f6f7;
 }
+.wchip.done {
+  border-color: #b7e3c6;
+  background: #f4fbf6;
+}
+.wchip.done .wchip-v {
+  color: #1a7f45;
+}
 .wchip.on {
   border-color: var(--text);
   background: var(--text);
@@ -219,7 +226,7 @@
   width: 13px;
   height: 13px;
   border: 1px solid var(--border-2);
-  border-radius: 4px;
+  border-radius: 50%;
   background: #fff;
   display: grid;
   place-items: center;
@@ -234,7 +241,11 @@
   color: var(--text);
 }
 .wchip.on .wchip-check::after {
-  content: "✓";
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .wchip-v {
   font-size: 13.5px;
@@ -975,6 +986,8 @@ tr.packing-row-missing-inbound > td:first-child {
   border-radius: 50%;
   background: #38966c;
 }
+.wchip-done { flex: none; padding: 0 5px; border-radius: 3px; background: #e6f7ec; color: #1a7f45; font-size: 10px; line-height: 15px; font-weight: 500; }
+.wchip.on .wchip-done { background: rgba(134, 227, 172, 0.22); color: #86e3ac; }
 .packing-history-label { display: inline-block; font-size: 11px; padding: 1px 6px; border: 1px solid #b7cce5; border-radius: 4px; color: #42658c; background: #edf4fc; margin-right: 5px; font-weight: 400; }
 tr.packing-row-history > td { background: #f6f9fd; }
 

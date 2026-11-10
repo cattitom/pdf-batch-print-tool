@@ -3,15 +3,23 @@
 /**
  * 一条出货待办。字段名与 core::PackingItem 一致，前端直接渲染。
  */
-export type PackingItemDto = { seq: number, name: string, qty: number, qtyRaw: string, cargo?: { [key in string]: string }, inbound: string, destination: string,
+export type PackingItemDto = { syncId?: string, manualFields?: Array<string>, seq: number, 
+/**
+ * Excel 原表行号（一基）
+ */
+sourceRow?: number, 
+/**
+ * 共用箱数的原表合并区域
+ */
+quantityGroup?: string, name: string, qty: number, qtyRaw: string, cargo?: { [key in string]: string }, inbound: string, destination: string, 
 /**
  * 原表的「到货情况」（到货 / 未到货 / 部分到货）
  */
-arrival: string,
+arrival: string, 
 /**
  * 客户 / 供应商（表里通常只在段首写一次，解析时向下沿用）
  */
-customer: string, waybill: string, checked: boolean,
+customer: string, waybill: string, checked: boolean, 
 /**
  * name / qty / inbound / inbound_sci / mark_text / dup_mark
  */

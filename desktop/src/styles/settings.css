@@ -2,6 +2,7 @@
    —— 从 src/App.css 拆出（2026-10-31），顺序与拆分前一致，别在中间插新样式。 */
 
 /* ---------- 设置 ---------- */
+.config-file-path { padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft);font-family:Consolas,monospace;font-size:12px;overflow-wrap:anywhere;user-select:text; }
 
 .settings-list {
   display: flex;

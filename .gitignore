@@ -75,3 +75,9 @@ feishu-sample/
 
 # 本机发布的手机页面更新
 /data/mobile-app/
+
+# 交付包（含 exe / 安装包，体积大，不进仓库）
+/交付/
+
+# 本地临时解包目录
+/.tmp-old-bundle/

@@ -1,29 +1,7 @@
-# 项目长期约定（批量 PDF 打印工具）
+# 项目长期备忘
 
-## 结构
-- 单端项目：只维护 `desktop/`（Tauri 2 + React 19 + Rust）。Streamlit Web 版已于 2026-10-21 下线，
-  根目录不再放 Python 代码；旧版备份在项目外 `D:\Users\Desktop\test\pdf_batch_print_tool_streamlit_backup_20261021.zip`。
-- 分层：`core/`（与 UI 无关的核心库，可独立 `cargo test`）→ `src-tauri/src/commands.rs`（命令桥接，JSON 契约
-  camelCase）→ `src/`（React 页面）。
-- 打印走 Windows 系统打印，不再依赖 SumatraPDF。
-
-## 业务约定
-- 箱唛规格**只有 100×100mm 热敏标签**一种（A4 横向已删除，勿再引入尺寸选项）。
-  版式常量在 `core/src/labels.rs` 的 `LABEL_MM` / `LAYOUT`。
-- 箱唛一箱一页：Code128（入库单号）+ 二维码（单号-S货架-箱号）+ 中文排版；生成后扁平化为 300dpi
-  灰度图，避免 CJK 字体整份嵌入导致体积膨胀。
-- 历史库为 SQLite 本机存储（`core/src/db.rs`），改表结构时注意 `CREATE TABLE IF NOT EXISTS` 不会迁移旧库，
-  新增列要写 `ALTER TABLE`，删列需确认旧库仍有默认值。
-
-## 验证惯例
-- 改核心逻辑：`cd core && cargo test --release`
-- 改桥接层：`cd src-tauri && cargo check --release`（debug 档案编 `ring` 会撞 MSVC `error D8050`，这台机器上必挂）
-- 改前端：`pnpm exec tsc --noEmit`
-- 出包：`pnpm tauri build`（产物在 `src-tauri/target/release/`）
-- **不要**用裸 `cargo build --release` 出包：没有 `tauri/custom-protocol`，前端会去连 `localhost:1420`，
-  装到机器上就是「无法访问此页面」。要快可 `pnpm tauri build --no-bundle`。
-
-## 命令/线程约定
-- Tauri 的 `#[tauri::command]` 默认跑在主线程：凡是要起外部进程、等网络、几十秒起步的，
-  必须写成 `pub async fn` + `tauri::async_runtime::spawn_blocking`，否则窗口直接「未响应」。
-  2026-11-02 的「双击打不开」就是这个（云表格同步堵主线程）。
+## 构建与发布流程（2026-11-10 用户要求）
+- 替换/升级 desktop.exe 时，必须**同时**重新生成安装包：`desktop/src-tauri/target/release/installers/PdfBatchPrint`（NSIS，`npm run tauri build` 或等价命令生成）。
+- 单独 `cargo build --release` 只产出裸 exe，不会更新安装包；cargo test 也不会更新 exe。
+- 发布交付 zip 时：重新打包 exe + `data/mobile-app/update.json`（页面包）+ 安装包三者都要是新的。
+- **不要用 `cargo build --release` 出生产 exe**：不内嵌前端（dist），启动后 WebView 会去连 localhost:1420 显示"拒绝连接"。必须用 `npm run tauri build`（同时产出安装包）。

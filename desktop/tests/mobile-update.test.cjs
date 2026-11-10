@@ -37,7 +37,7 @@ function setup(initial = {}, storage) {
   };
 }
 test('首次启动无需电脑，使用内置页面且不动离线数据',async()=>{
-  const h=setup(); await h.api.boot(); h.api.ready(); assert.match(h.html,/今天的工作/);
+  const h=setup(); await h.api.boot(); h.api.ready(); assert.match(h.html,/手机主库概览/);assert.doesNotMatch(h.html,/今天的工作|恢复内置版/);
   assert.equal(h.calls.length,1); assert.equal(h.store.get('shipping-shell.pending'),'[{"name":"待回传"}]');
 });
 test('整包下载后只暂存，下次启动才切换并确认健康',async()=>{

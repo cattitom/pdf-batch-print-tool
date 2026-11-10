@@ -1,5 +1,38 @@
 use super::*;
 
+#[test]
+fn shenzhen_mark_is_a_route_not_a_shipped_flag() {
+    let rows = vec![
+        vec!["客户名称", "产品名称", "数量", "到货情况", "收货仓", "入库号"],
+        vec!["九宸", "黑框银色+金色，150套/件", "7", "发深圳", "休斯顿", "IB064261107RZ"],
+        vec!["九宸", "普通眼镜", "4", "", "休斯顿", "IB064261108SA"],
+    ].into_iter().map(|r|r.into_iter().map(str::to_string).collect()).collect();
+    let parsed = parse_table(rows,true);
+    assert_eq!(parsed.items[0].waybill,"发深圳");
+    assert!(parsed.items[0].issues.iter().any(|v|v=="special_shenzhen"));
+    assert!(!parsed.items[0].checked,"特殊路线不等于已出货");
+    assert_eq!(parsed.items[0].qty,7);
+    assert_eq!(parsed.items[0].customer,"九宸");
+    assert!(parsed.items[1].waybill.is_empty(),"路线不得串到下一行");
+    assert!(!parsed.items[1].issues.iter().any(|v|v=="special_shenzhen"));
+}
+
+#[test]
+fn merged_customer_blank_does_not_borrow_previous_segment() {
+    let rows: Vec<Vec<String>> = vec![
+        vec!["客户名称", "产品名称", "数量", "入库号"],
+        vec!["张婷婷", "宠物地垫", "3", "IB001"],
+        vec!["", "热风梳", "35", "IB191261107RU"],
+        vec!["开元吴晓松", "旅行分装瓶", "1", "IB055261108RT"],
+    ].into_iter().map(|r| r.into_iter().map(str::to_string).collect()).collect();
+    let merged = parse_table(rows.clone(), true);
+    assert_eq!(merged.items[0].customer, "张婷婷");
+    assert_eq!(merged.items[1].customer, "");
+    assert_eq!(merged.items[2].customer, "开元吴晓松");
+    let text = parse_table(rows, false);
+    assert_eq!(text.items[1].customer, "张婷婷", "文本粘贴没有合并信息，保持原来的段内继承");
+}
+
     fn sample_tsv() -> String {
         [
             "门铰链标准 20/件\t52\t37\t34\t10.90\t14.3\t20\tTK5 1\tEXX\t美西\tIN5LK113218",
@@ -121,7 +154,7 @@ use super::*;
     }
 
     #[test]
-    fn dedupes_by_name_and_inbound() {
+    fn split_shipments_keep_quantity_and_individual_check_state_without_duplicate_warning() {
         let text = [
             "商品\t数量\t入库号\t标记",
             "门铰链\t10\tA1\t",
@@ -129,8 +162,24 @@ use super::*;
         ]
         .join("\n");
         let sheet = parse_text(&text);
-        assert_eq!(sheet.items.len(), 1);
-        assert!(sheet.items[0].checked, "去重保留已勾选");
+        assert_eq!(sheet.items.len(), 2);
+        assert_eq!(sheet.total_qty,20);
+        assert!(!sheet.items[0].checked);
+        assert!(sheet.items[1].checked);
+        assert!(!sheet.warnings.iter().any(|w| w.contains("重复")));
+        let shipped: i64 = sheet.items.iter().filter(|i| i.checked).map(|i| i.qty).sum();
+        let remaining: i64 = sheet.items.iter().filter(|i| !i.checked).map(|i| i.qty).sum();
+        assert_eq!(shipped, 10);
+        assert_eq!(remaining, 10);
+        assert!(!sheet.warnings.iter().any(|w|w.contains("已忽略")));
+    }
+
+    #[test]
+    fn identical_one_piece_rows_both_count_towards_source_total(){
+        let rows=vec![vec!["客户名称","商品名称","数量","入库号"],vec!["杨总","唇线笔，144/件","1","IB059261105RS"],vec!["杨总","其他货物","1135","IB-OTHER"],vec!["杨总","唇线笔，144/件","1","IB059261105RS"],vec!["","","1137",""]].into_iter().map(|r|r.into_iter().map(str::to_string).collect()).collect();
+        let sheet=parse_table(rows,true);
+        assert_eq!(sheet.items.len(),3);assert_eq!(sheet.total_qty,1137);assert_eq!(sheet.expected_qty,Some(1137));
+        assert!(!sheet.warnings.iter().any(|w|w.contains("合计对不上")));
     }
 
     /// 真 xlsx（含合并单元格）：验证 zip 读取 + mergeCells 展开。
@@ -169,19 +218,6 @@ use super::*;
         assert_eq!(extract_waybill("单号: 6812704625").as_deref(), Some("6812704625"));
         assert_eq!(extract_waybill("6812704625").as_deref(), Some("6812704625"));
         assert_eq!(extract_waybill("EXX"), None);
-    }
-
-    #[test]
-    fn unescapes_xml_entities() {
-        assert_eq!(unescape("门&amp;窗"), "门&窗");
-        assert_eq!(unescape("&#65;"), "A");
-    }
-
-    #[test]
-    fn parses_col_index() {
-        assert_eq!(col_index("A1"), 0);
-        assert_eq!(col_index("K1"), 10);
-        assert_eq!(col_index("AB1"), 27);
     }
 
     #[test]
